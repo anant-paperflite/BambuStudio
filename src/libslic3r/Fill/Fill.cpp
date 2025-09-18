@@ -30,6 +30,9 @@ struct SurfaceFillParams
     InfillPattern   skin_pattern = InfillPattern(0);
     InfillPattern   skeleton_pattern = InfillPattern(0);
 
+    //For checkered pattern, get obj file path
+    const char*     sparse_infill_checkered_file = "";
+
     // FillBase
     // in unscaled coordinates
     coordf_t    	spacing = 0.;
@@ -130,7 +133,8 @@ struct SurfaceFillParams
 				this->infill_lock_depth      ==  rhs.infill_lock_depth &&
 				this->skin_infill_depth      ==  rhs.skin_infill_depth &&
 				this-> skin_pattern     == rhs.skin_pattern &&
-				this-> skeleton_pattern == rhs.skeleton_pattern;
+				this-> skeleton_pattern == rhs.skeleton_pattern &&
+				this-> sparse_infill_checkered_file == rhs.sparse_infill_checkered_file;
 	}
 };
 
@@ -195,18 +199,22 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
 		        params.extruder 	 = layerm.region().extruder(extrusion_role);
 		        params.pattern 		 = region_config.sparse_infill_pattern.value;
 		        params.density       = float(region_config.sparse_infill_density);
-                if (params.pattern == ipLockedZag) {
+            if (params.pattern == ipLockedZag) {
                     params.infill_lock_depth = scale_(region_config.infill_lock_depth);
                     params.skin_infill_depth = scale_(region_config.skin_infill_depth);
                     params.skin_pattern      = region_config.locked_skin_infill_pattern.value;
                     params.skeleton_pattern  = region_config.locked_skeleton_infill_pattern.value;
-				}
+				    }
             if (params.pattern == ipCrossZag || params.pattern == ipLockedZag){
                 params.infill_shift_step     = scale_(region_config.infill_shift_step);
                 params.symmetric_infill_y_axis  = region_config.symmetric_infill_y_axis;
             }else if (params.pattern == ipZigZag){
                 params.infill_rotate_step    =  region_config.infill_rotate_step * M_PI / 360;
 								params.symmetric_infill_y_axis  = region_config.symmetric_infill_y_axis;
+            }
+
+            if( params.pattern == ipCheckered){
+              params.sparse_infill_checkered_file = region_config.sparse_infill_checkered_file.value.c_str();
             }
 
 				if (surface.is_solid()) {
@@ -684,8 +692,11 @@ void Layer::make_fills(FillAdaptive::Octree* adaptive_fill_octree, FillAdaptive:
 			params.symmetric_infill_y_axis = surface_fill.params.symmetric_infill_y_axis;
 		}
 
+    params.sparse_infill_checkered_file = surface_fill.params.sparse_infill_checkered_file;
+
 		if (surface_fill.params.pattern == ipGrid || surface_fill.params.pattern == ipFloatingConcentric)
 			params.can_reverse = false;
+
 		LayerRegion* layerm = this->m_regions[surface_fill.region_id];
 		for (ExPolygon& expoly : surface_fill.expolygons) {
 

@@ -92,6 +92,9 @@ struct FillParams
     bool            locked_zag{false};
     float           infill_lock_depth{0.0};
     float           skin_infill_depth{0.0};
+
+    //For checkered pattern, get obj file path
+    const char*     sparse_infill_checkered_file = "";
 };
 static_assert(IsTriviallyCopyable<FillParams>::value, "FillParams class is not POD (and it should be - see constructor).");
 

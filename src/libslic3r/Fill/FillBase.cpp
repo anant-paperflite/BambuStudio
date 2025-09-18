@@ -25,7 +25,7 @@
 #include "FillConcentricInternal.hpp"
 #include "FillCrossHatch.hpp"
 #include "FillFloatingConcentric.hpp"
-
+#include "FillCheckered.hpp"
 // #define INFILL_DEBUG_OUTPUT
 
 namespace Slic3r {
@@ -61,6 +61,8 @@ Fill* Fill::new_from_type(const InfillPattern type)
     case ipCrossZag:            return new FillCrossZag();
     case ipFloatingConcentric:  return new FillFloatingConcentric();
     case ipLockedZag:           return new FillLockedZag();
+    case ipCheckered:           return new FillCheckered();
+
     default: throw Slic3r::InvalidArgument("unknown type");
     }
 }

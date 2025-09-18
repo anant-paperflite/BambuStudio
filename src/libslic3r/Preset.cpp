@@ -916,7 +916,7 @@ static std::vector<std::string> s_Preset_print_options {
     "minimum_sparse_infill_area", "reduce_infill_retraction", "ironing_pattern", "ironing_type",
     "ironing_flow", "ironing_speed", "ironing_spacing","ironing_direction", "ironing_inset",
     "max_travel_detour_distance",
-    "fuzzy_skin", "fuzzy_skin_thickness", "fuzzy_skin_point_distance",
+    "fuzzy_skin", "fuzzy_skin_thickness", "fuzzy_skin_point_distance", "sparse_infill_checkered_file",
 #ifdef HAS_PRESSURE_EQUALIZER
     "max_volumetric_extrusion_rate_slope_positive", "max_volumetric_extrusion_rate_slope_negative",
 #endif /* HAS_PRESSURE_EQUALIZER */

@@ -181,7 +181,8 @@ static t_config_enum_values s_keys_map_InfillPattern {
     { "crosshatch",         ipCrossHatch},
     { "zigzag",             ipZigZag },
     { "crosszag",           ipCrossZag },
-    { "lockedzag",          ipLockedZag }
+    { "lockedzag",          ipLockedZag },
+    { "checkered",          ipCheckered },
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(InfillPattern)
 
@@ -2214,6 +2215,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_values.push_back("zigzag");
     def->enum_values.push_back("crosszag");
     def->enum_values.push_back("lockedzag");
+    def->enum_values.push_back("checkered");
     def->enum_labels.push_back(L("Concentric"));
     def->enum_labels.push_back(L("Rectilinear"));
     def->enum_labels.push_back(L("Grid"));
@@ -2235,6 +2237,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.push_back(L("Zig Zag"));
     def->enum_labels.push_back(L("Cross Zag"));
     def->enum_labels.push_back(L("Locked Zag"));
+    def->enum_labels.push_back(L("Checkered"));
     def->set_default_value(new ConfigOptionEnum<InfillPattern>(ipCubic));
 
     def                = this->add("locked_skin_infill_pattern", coEnum);
@@ -2259,6 +2262,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_values.push_back("crosshatch");
     def->enum_values.push_back("zigzag");
     def->enum_values.push_back("crosszag");
+    def->enum_values.push_back("crosszag");
     def->enum_labels.push_back(L("Concentric"));
     def->enum_labels.push_back(L("Rectilinear"));
     def->enum_labels.push_back(L("Grid"));
@@ -2276,6 +2280,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.push_back(L("Cross Hatch"));
     def->enum_labels.push_back(L("Zig Zag"));
     def->enum_labels.push_back(L("Cross Zag"));
+    def->enum_labels.push_back(L("Checkered"));
     def->set_default_value(new ConfigOptionEnum<InfillPattern>(ipCrossZag));
 
     def                = this->add("locked_skeleton_infill_pattern", coEnum);
@@ -2300,6 +2305,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_values.push_back("crosshatch");
     def->enum_values.push_back("zigzag");
     def->enum_values.push_back("crosszag");
+    def->enum_values.push_back("checkered");
     def->enum_labels.push_back(L("Concentric"));
     def->enum_labels.push_back(L("Rectilinear"));
     def->enum_labels.push_back(L("Grid"));
@@ -2317,7 +2323,18 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.push_back(L("Cross Hatch"));
     def->enum_labels.push_back(L("Zig Zag"));
     def->enum_labels.push_back(L("Cross Zag"));
+    def->enum_labels.push_back(L("Checkered"));
     def->set_default_value(new ConfigOptionEnum<InfillPattern>(ipZigZag));
+
+    def = this->add("sparse_infill_checkered_file", coString);
+    def->label = L("Checkered UVMap");
+    def->category = L("Strength");
+    def->tooltip = L("Checkered UVMap");
+    def->sidetext = "";
+    def->multiline = true;
+    def->full_width = true;
+    def->height = 5;
+    def->set_default_value(new ConfigOptionString(""));
 
     def = this->add("top_surface_acceleration", coFloats);
     def->label = L("Top surface");

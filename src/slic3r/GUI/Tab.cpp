@@ -2307,6 +2307,8 @@ void TabPrint::build()
         optgroup->append_single_option_line("skin_infill_line_width", "parameter/line-width", -1, true);
         optgroup->append_single_option_line("skeleton_infill_line_width", "parameter/line-width", -1, true);
 
+        optgroup->append_single_option_line("sparse_infill_checkered_file", "", -1, true);
+
         optgroup->append_single_option_line("symmetric_infill_y_axis");
         optgroup->append_single_option_line("infill_shift_step");
 

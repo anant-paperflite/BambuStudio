@@ -639,8 +639,9 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
     //cross zag
     bool is_cross_zag = config->option<ConfigOptionEnum<InfillPattern>>("sparse_infill_pattern")->value == InfillPattern::ipCrossZag;
     bool is_locked_zig = config->option<ConfigOptionEnum<InfillPattern>>("sparse_infill_pattern")->value == InfillPattern::ipLockedZag;
-
+    
     toggle_line("infill_shift_step", is_cross_zag || is_locked_zig);
+    
     for (auto el : {"skeleton_infill_density", "skin_infill_density", "infill_lock_depth", "skin_infill_depth", "skin_infill_line_width", "skeleton_infill_line_width", "locked_skin_infill_pattern", "locked_skeleton_infill_pattern"})
         toggle_line(el, is_locked_zig);
 
@@ -648,6 +649,10 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
 
     toggle_line("infill_rotate_step", is_zig_zag);
     toggle_line("symmetric_infill_y_axis", is_zig_zag || is_cross_zag || is_locked_zig);
+
+    //Checkered infill
+    bool is_checkered_infill = config->option<ConfigOptionEnum<InfillPattern>>("sparse_infill_pattern")->value == InfillPattern::ipCheckered;
+    toggle_line("sparse_infill_checkered_file", is_checkered_infill);
 
     bool has_spiral_vase         = config->opt_bool("spiral_mode");
     toggle_line("spiral_mode_smooth", has_spiral_vase);
