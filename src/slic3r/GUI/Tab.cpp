@@ -2621,6 +2621,9 @@ void TabPrint::build()
     if (m_presets == nullptr)
         m_presets = &m_preset_bundle->prints;
     load_initial_data();
+    // Ensure new options exist so get_option() does not warn and reload_config() does not crash (e.g. old presets).
+    if (m_config->def()->has("checkered_infill_uv_map_path") && !m_config->has("checkered_infill_uv_map_path"))
+        m_config->set_key_value("checkered_infill_uv_map_path", new ConfigOptionString(""));
 
     auto page = add_options_page(L("Quality"), "empty");
         auto optgroup = page->new_optgroup(L("Layer height"), L"param_layer_height");
@@ -5429,9 +5432,6 @@ void Tab::load_current_preset()
             wxGetApp().obj_list()->update_objects_list_filament_column(1);
     }
     if (m_type == Preset::TYPE_PRINT) {
-        // Ensure new options exist in config so get_config_value() does not dereference null (e.g. old presets).
-        if (m_config->def()->has("checkered_infill_uv_map_path") && !m_config->has("checkered_infill_uv_map_path"))
-            m_config->set_key_value("checkered_infill_uv_map_path", new ConfigOptionString(""));
         if (auto tab = wxGetApp().plate_tab) {
             tab->m_config->apply(*m_config);
             tab->update_extruder_variants();

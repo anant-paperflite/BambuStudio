@@ -206,6 +206,17 @@ bool load_obj(const char *path, TriangleMesh *meshptr, ObjInfo &obj_info, std::s
                         }
                     }
                 };
+                // Append UVs for this face when texture coords exist (for UV-only OBJs without MTL)
+                auto append_face_uv = [&data, &obj_info](int uv0_idx, int uv1_idx, int uv2_idx) {
+                    if (data.textureCoordinates.size() < 6) return;
+                    if (uv0_idx < 0 || uv1_idx < 0 || uv2_idx < 0) return;
+                    size_t n = data.textureCoordinates.size() / 2;
+                    if (size_t(uv0_idx) >= n || size_t(uv1_idx) >= n || size_t(uv2_idx) >= n) return;
+                    Vec2f uv0(data.textureCoordinates[uv0_idx * 2], data.textureCoordinates[uv0_idx * 2 + 1]);
+                    Vec2f uv1(data.textureCoordinates[uv1_idx * 2], data.textureCoordinates[uv1_idx * 2 + 1]);
+                    Vec2f uv2(data.textureCoordinates[uv2_idx * 2], data.textureCoordinates[uv2_idx * 2 + 1]);
+                    obj_info.uvs.emplace_back(std::array<Vec2f, 3>{uv0, uv1, uv2});
+                };
                 if (exist_mtl) {
                     if (obj_info.mtl_colors.empty()) {
                         if (mtl_data.first_time_using_makerlab) {
@@ -222,12 +233,16 @@ bool load_obj(const char *path, TriangleMesh *meshptr, ObjInfo &obj_info, std::s
                         }
                     }
                     set_face_color_by_mtl(face_index);
+                } else if (data.textureCoordinates.size() > 0) {
+                    append_face_uv(uvs[0], uvs[1], uvs[2]);
                 }
                 if (cnt == 4) {
                     its.indices.emplace_back(indices[0], indices[2], indices[3]);
                     int face_index = its.indices.size() - 1;
                     if (exist_mtl) {
                         set_face_color_by_mtl(face_index);
+                    } else if (data.textureCoordinates.size() > 0) {
+                        append_face_uv(uvs[0], uvs[2], uvs[3]);
                     }
                 }
             }
