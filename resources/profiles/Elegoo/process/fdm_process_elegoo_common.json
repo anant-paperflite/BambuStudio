@@ -27,6 +27,7 @@
     "infill_direction": "45",
     "sparse_infill_density": "15%",
     "sparse_infill_pattern": "grid",
+    "checkered_infill_uv_map_path": "",
     "initial_layer_acceleration": "20",
     "travel_acceleration": "200",
     "inner_wall_acceleration": "200",

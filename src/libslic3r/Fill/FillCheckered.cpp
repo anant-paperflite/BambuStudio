@@ -18,7 +18,7 @@
 #include <string>
 
 // Enable to write debug SVGs (XY segments and UV-space segments) to g_data_dir/SVG/
-// #define CHECKERED_INFILL_DEBUG_SVG
+#define CHECKERED_INFILL_DEBUG_SVG
 
 namespace Slic3r {
 
@@ -140,6 +140,68 @@ inline bool is_fill_cell(int i, int j) { return (i + j) % 2 == 0; }
 
 } // namespace
 
+#ifdef CHECKERED_INFILL_DEBUG_SVG
+void FillCheckered::write_debug_svgs(const Surface *surface,
+                                     const Polylines &polylines_before_filter,
+                                     const Polylines &polylines_after_filter,
+                                     const std::vector<std::pair<Vec2f, Vec2f>> &uv_segments) const
+{
+    static int s_svg_run = 0;
+    const int run = s_svg_run++;
+    std::string path_xy_before = debug_out_path("fill_checkered_xy_before_layer%d_z%.2f_run%d.svg",
+        int(this->layer_id), this->z, run);
+    std::string path_xy_after  = debug_out_path("fill_checkered_xy_after_layer%d_z%.2f_run%d.svg",
+        int(this->layer_id), this->z, run);
+    std::string path_uv       = debug_out_path("fill_checkered_uv_layer%d_z%.2f_run%d.svg",
+        int(this->layer_id), this->z, run);
+
+    BoundingBox bbox = get_extents(surface->expolygon);
+    bbox.offset(scale_(2.));
+    {
+        SVG svg(path_xy_before, bbox);
+        if (svg.is_opened()) {
+            svg.draw_outline(surface->expolygon, "blue", "cyan", scale_(0.05));
+            svg.draw(polylines_before_filter, "green", scale_(0.08));
+            svg.add_comment("Checkered infill XY before filter (full grid)");
+        }
+    }
+    {
+        SVG svg(path_xy_after, bbox);
+        if (svg.is_opened()) {
+            svg.draw_outline(surface->expolygon, "blue", "cyan", scale_(0.05));
+            svg.draw(polylines_after_filter, "red", scale_(0.08));
+            svg.add_comment("Checkered infill XY after UV filter");
+        }
+    }
+    {
+        BoundingBox uv_bbox(Point(0, 0), Point(coord_t(scale_(100.)), coord_t(scale_(100.))));
+        SVG svg(path_uv, uv_bbox, scale_(1.), true);
+        if (svg.is_opened()) {
+            for (int g = 0; g <= 10; ++g) {
+                coord_t c = scale_(g * 10.);
+                svg.draw(Line(Point(c, 0), Point(c, coord_t(scale_(100.)))), "lightgray", scale_(0.2));
+                svg.draw(Line(Point(0, c), Point(coord_t(scale_(100.)), c)), "lightgray", scale_(0.2));
+            }
+            for (const auto &seg : uv_segments) {
+                float u1 = seg.first.x() * 100.f, v1 = (1.f - seg.first.y()) * 100.f;
+                float u2 = seg.second.x() * 100.f, v2 = (1.f - seg.second.y()) * 100.f;
+                Point p1(coord_t(scale_(u1)), coord_t(scale_(v1))), p2(coord_t(scale_(u2)), coord_t(scale_(v2)));
+                svg.draw(Line(p1, p2), "blue", scale_(0.5));
+            }
+            svg.add_comment("Checkered infill in UV space; overlay on texture image to verify segments line on black lines");
+        }
+    }
+    BOOST_LOG_TRIVIAL(debug) << "FillCheckered: wrote debug SVGs " << path_xy_before << " " << path_xy_after << " " << path_uv;
+}
+#else
+void FillCheckered::write_debug_svgs(const Surface *,
+                                     const Polylines &,
+                                     const Polylines &,
+                                     const std::vector<std::pair<Vec2f, Vec2f>> &) const
+{
+}
+#endif
+
 Polylines FillCheckered::fill_surface(const Surface *surface, const FillParams &params)
 {
     BOOST_LOG_TRIVIAL(debug) << "FillCheckered::fill_surface() layer_id=" << this->layer_id << " z=" << this->z;
@@ -212,53 +274,7 @@ Polylines FillCheckered::fill_surface(const Surface *surface, const FillParams &
                 << " ray_miss=" << ray_miss << " polylines_out=" << polylines_out.size();
 
 #ifdef CHECKERED_INFILL_DEBUG_SVG
-            static int s_svg_run = 0;
-            const int run = s_svg_run++;
-            std::string path_xy_before = debug_out_path("fill_checkered_xy_before_layer%d_z%.2f_run%d.svg",
-                int(this->layer_id), this->z, run);
-            std::string path_xy_after  = debug_out_path("fill_checkered_xy_after_layer%d_z%.2f_run%d.svg",
-                int(this->layer_id), this->z, run);
-            std::string path_uv       = debug_out_path("fill_checkered_uv_layer%d_z%.2f_run%d.svg",
-                int(this->layer_id), this->z, run);
-
-            BoundingBox bbox = get_extents(surface->expolygon);
-            bbox.offset(scale_(2.));
-            {
-                SVG svg(path_xy_before, bbox);
-                if (svg.is_opened()) {
-                    svg.draw_outline(surface->expolygon, "blue", "cyan", scale_(0.05));
-                    svg.draw(polylines_before_filter, "green", scale_(0.08));
-                    svg.add_comment("Checkered infill XY before filter (full grid)");
-                }
-            }
-            {
-                SVG svg(path_xy_after, bbox);
-                if (svg.is_opened()) {
-                    svg.draw_outline(surface->expolygon, "blue", "cyan", scale_(0.05));
-                    svg.draw(polylines_out, "red", scale_(0.08));
-                    svg.add_comment("Checkered infill XY after UV filter");
-                }
-            }
-            // UV-space SVG: (u,v) in [0,1] -> (u*100, (1-v)*100) so (0,0)=top-left matches texture convention
-            {
-                BoundingBox uv_bbox(Point(0, 0), Point(scale_(100.), scale_(100.)));
-                SVG svg(path_uv, uv_bbox, scale_(1.), true);
-                if (svg.is_opened()) {
-                    for (int g = 0; g <= 10; ++g) {
-                        coord_t c = scale_(g * 10.);
-                        svg.draw(Line(Point(c, 0), Point(c, scale_(100.))), "lightgray", scale_(0.2));
-                        svg.draw(Line(Point(0, c), Point(scale_(100.), c)), "lightgray", scale_(0.2));
-                    }
-                    for (const auto &seg : uv_segments) {
-                        float u1 = seg.first.x() * 100.f, v1 = (1.f - seg.first.y()) * 100.f;
-                        float u2 = seg.second.x() * 100.f, v2 = (1.f - seg.second.y()) * 100.f;
-                        Point p1(scale_(u1), scale_(v1)), p2(scale_(u2), scale_(v2));
-                        svg.draw(Line(p1, p2), "blue", scale_(0.5));
-                    }
-                    svg.add_comment("Checkered infill in UV space; overlay on texture image to verify segments line on black lines");
-                }
-            }
-            BOOST_LOG_TRIVIAL(debug) << "FillCheckered: wrote debug SVGs " << path_xy_before << " " << path_xy_after << " " << path_uv;
+            write_debug_svgs(surface, polylines_before_filter, polylines_out, uv_segments);
 #endif
         } else {
             BOOST_LOG_TRIVIAL(debug) << "FillCheckered: UV map not available, using full grid (no filter)";

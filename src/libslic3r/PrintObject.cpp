@@ -1274,7 +1274,8 @@ bool PrintObject::invalidate_state_by_config_options(
                    || opt_key == "infill_lock_depth"
                    || opt_key == "skin_infill_depth"
                    || opt_key == "locked_skin_infill_pattern"
-                   || opt_key == "locked_skeleton_infill_pattern") {
+                   || opt_key == "locked_skeleton_infill_pattern"
+                   || opt_key == "checkered_infill_uv_map_path") {
             steps.emplace_back(posPrepareInfill);
         } else if (opt_key == "sparse_infill_density") {
             // One likely wants to reslice only when switching between zero infill to simulate boolean difference (subtracting volumes),

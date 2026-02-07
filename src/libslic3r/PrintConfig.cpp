@@ -2588,7 +2588,10 @@ void PrintConfigDef::init_fff_params()
     def->label = L("UV Map file path");
     def->category = L("Strength");
     def->tooltip = L("Path to the UV map file used for checkered infill pattern. Used only when Sparse infill pattern is Checkered Pattern.");
-    def->mode = comAdvanced;
+    def->sidetext = "";
+    def->multiline = true;
+    def->full_width = true;
+    def->height = 5;
     def->set_default_value(new ConfigOptionString(""));
 
     def                = this->add("locked_skin_infill_pattern", coEnum);

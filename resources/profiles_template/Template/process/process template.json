@@ -61,6 +61,7 @@
     "resolution": "0.012",
     "sparse_infill_density": "15%",
     "sparse_infill_pattern": "grid",
+    "checkered_infill_uv_map_path": "",
     "sparse_infill_line_width": "0.45",
     "sparse_infill_speed": "270",
     "seam_position": "aligned",
