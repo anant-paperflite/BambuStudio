@@ -38,6 +38,20 @@ webkit_web_view_run_javascript_finish                (WebKitWebView             
 WEBKIT_API void
 webkit_javascript_result_unref              (WebKitJavascriptResult *js_result);
 }
+
+static GOnce register_handler_once = G_ONCE_INIT;
+
+gpointer
+register_webview_handler(gpointer data)
+{
+    wxWebView *webView = (wxWebView *) data;
+
+    // With WKWebView handlers need to be registered before creation
+    webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewArchiveHandler("wxfs")));
+    // And the memory: file system
+    webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewFSHandler("memory")));
+    return NULL;
+}
 #endif
 
 #ifdef __WIN32__
@@ -60,15 +74,17 @@ public:
                 if (hr == S_OK) {
                     settings2->put_UserAgent(userAgent.wc_str());
                     settings2->Release();
+                    ICoreWebView2Settings4 *settings4;
+                    hr = settings->QueryInterface(&settings4);
+                    if (hr == S_OK) {
+                        settings4->put_IsGeneralAutofillEnabled(Slic3r::GUI::wxGetApp().app_config->get_bool("webview_auto_fill"));
+                        settings4->Release();
+                    }
                     return true;
                 }
             }
             settings->Release();
             return false;
-        } else {
-            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": create web view failed.";
-            wxDynamicLibrary loaderDll;
-            loaderDll.Load("WebView2Loader.dll", wxDL_DEFAULT);
         }
         pendingUserAgent = userAgent;
         return true;
@@ -262,10 +278,14 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
         // And the memory: file system
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewFSHandler("memory")));
 #else
+#if defined __linux__
+        g_once(&register_handler_once, register_webview_handler, webView);
+#else
         // With WKWebView handlers need to be registered before creation
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewArchiveHandler("wxfs")));
         // And the memory: file system
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewFSHandler("memory")));
+#endif
         webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
         webView->SetUserAgent(wxString::Format("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) BBL-Slicer/v%s (%s) BBL-Language/%s",
                                                SLIC3R_VERSION, Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light", language_code.mb_str()));

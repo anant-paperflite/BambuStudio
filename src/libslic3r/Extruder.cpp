@@ -12,7 +12,6 @@ Extruder::Extruder(unsigned int id, GCodeConfig *config, bool share_extruder) :
     m_share_extruder(share_extruder)
 {
     reset();
-
     // cache values that are going to be called often
     m_e_per_mm3 = this->filament_flow_ratio();
     m_e_per_mm3 /= this->filament_crossection();
@@ -63,6 +62,7 @@ double Extruder::retract(double length, double restart_extra)
         if (m_config->use_relative_e_distances)
             m_share_E[extruder_id()] = 0.;
         double to_retract = std::max(0., length - m_share_retracted[extruder_id()]);
+        m_restart_extra   = restart_extra;
         if (to_retract > 0.) {
             m_share_E[extruder_id()]             -= to_retract;
             m_absolute_E          -= to_retract;
@@ -74,11 +74,11 @@ double Extruder::retract(double length, double restart_extra)
         if (m_config->use_relative_e_distances)
             m_E = 0.;
         double to_retract = std::max(0., length - m_retracted);
+        m_restart_extra = restart_extra;
         if (to_retract > 0.) {
             m_E             -= to_retract;
             m_absolute_E    -= to_retract;
             m_retracted     += to_retract;
-            m_restart_extra = restart_extra;
         }
         return to_retract;
     }
@@ -88,9 +88,10 @@ double Extruder::unretract()
 {
     // BBS
     if (m_share_extruder) {
-        double dE = m_share_retracted[extruder_id()];
+        double dE = m_share_retracted[extruder_id()] + m_restart_extra;
         this->extrude(dE);
         m_share_retracted[extruder_id()]     = 0.;
+        m_restart_extra                  = 0.;
         return dE;
     } else {
         double dE = m_retracted + m_restart_extra;

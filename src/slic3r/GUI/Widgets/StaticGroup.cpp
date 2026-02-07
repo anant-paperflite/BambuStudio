@@ -1,7 +1,12 @@
 #include "StaticGroup.hpp"
+#include "Label.hpp"
 
-StaticGroup::StaticGroup(wxWindow *parent, wxWindowID id, const wxString &label)
-    : wxStaticBox(parent, id, label)
+StaticGroup::StaticGroup(wxWindow *parent, wxWindowID id)
+#ifdef __WXOSX__
+    : wxStaticBox(parent, id, ".")
+#else
+    : wxStaticBox(parent, id, "")
+#endif
 {
     SetBackgroundColour(*wxWHITE);
     SetForegroundColour("#CECECE");
@@ -11,16 +16,25 @@ StaticGroup::StaticGroup(wxWindow *parent, wxWindowID id, const wxString &label)
 #endif
 }
 
+bool StaticGroup::Show(bool show)
+{
+    bool ret = wxStaticBox::Show(show);
+    return ret;
+}
+
 void StaticGroup_layoutBadge(void * group, void * badge);
+
 
 void StaticGroup::ShowBadge(bool show)
 {
 #ifdef __WXMSW__
-    if (show)
+    if (show && badge.name() != "badge") {
         badge = ScalableBitmap(this, "badge", 18);
-    else
+        Refresh();
+    } else if (!show && !badge.name().empty()) {
         badge = ScalableBitmap{};
-    Refresh();
+        Refresh();
+    }
 #endif
 #ifdef __WXOSX__
     if (show && badge == nullptr) {

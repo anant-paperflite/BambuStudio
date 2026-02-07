@@ -20,6 +20,7 @@
 #include "wx/fs_arc.h"
 #include "wx/fs_mem.h"
 #include "wx/stdpaths.h"
+#include <wx/bmpbuttn.h>
 #include <wx/panel.h>
 #include <wx/tbarbase.h>
 #include "wx/textctrl.h"
@@ -48,6 +49,9 @@ public:
     void OnForward(wxCommandEvent& evt);
     void OnStop(wxCommandEvent& evt);
     void OnReload(wxCommandEvent& evt);
+    void OnOnlineBack(wxCommandEvent& evt);
+    void OnOnlineReload(wxCommandEvent& evt);
+    void OnOpenInBrowser(wxCommandEvent& evt);
     void OnNavigationRequest(wxWebViewEvent& evt);
     void OnNavigationComplete(wxWebViewEvent& evt);
     void OnDocumentLoaded(wxWebViewEvent& evt);
@@ -134,6 +138,8 @@ public:
     void OpenModelDetail(std::string id, NetworkAgent *agent);
     void UpdateMakerworldLoginStatus();
     void SetMakerworldPageLoginStatus(bool login, wxString ticket = "");
+    void get_wiki_search_result(std::string keyword);
+    void get_academy_list();
 
     //Makerlab
     bool     m_MakerLabFirst;
@@ -147,8 +153,14 @@ public:
     void     SaveMakerlabStl(int SequenceID,std::string Base64Buf, std::string FileName);
     void     UpdateMakerlabStatus();
 
+    //wiki
+    bool m_WikiFirst;
+    wxString m_Wiki_LastUrl;
+
     //Common UI
     void SetWebviewShow(wxString name, bool show);
+    void SetOnlineToolbarVisible(bool visible);
+    void UpdateOnlineToolbarState();
     std::string GetStudioLanguage();
 
     //PrintHistory
@@ -164,24 +176,38 @@ public:
 private:
     std::string m_Region;
 
-    wxBoxSizer *topsizer;
+    wxBoxSizer *topsizer { nullptr };
 
     int         m_loginstatus;
-    wxBoxSizer* m_home_web;
-    wxWebView* m_browser;
-    wxWebView* m_browserLeft;
-    wxWebView * m_browserMW;
-    wxWebView  *m_browserPH;               //PrintHistory
-    wxWebView  *m_browserML;               //MakerLab
+    bool m_isPerformingBack = false;
+    bool m_online_history_cleared { false };
+    bool m_makerlab_history_cleared { false };
+    wxBoxSizer* m_home_web { nullptr };
+    wxWebView* m_browser { nullptr };
+    wxWebView* m_browserLeft { nullptr };
+    wxWebView * m_browserMW { nullptr };
+    wxWebView  *m_browserPH { nullptr };               //PrintHistory
+    wxWebView  *m_browserML { nullptr };               //MakerLab
+    wxWebView  *m_browserWiki { nullptr };
 
     //Basic Browser
-    wxBoxSizer *bSizer_toolbar;
-    wxButton *  m_button_back;
-    wxButton *  m_button_forward;
-    wxButton *  m_button_stop;
-    wxButton *  m_button_reload;
-    wxTextCtrl *m_url;
-    wxButton *  m_button_tools;
+    wxBoxSizer *bSizer_toolbar { nullptr };
+    wxButton *  m_button_back { nullptr };
+    wxButton *  m_button_forward { nullptr };
+    wxButton *  m_button_stop { nullptr };
+    wxButton *  m_button_reload { nullptr };
+    wxTextCtrl *m_url { nullptr };
+    wxButton *  m_button_tools { nullptr };
+
+    // Online page toolbar
+    wxPanel *       m_online_toolbar_panel { nullptr };
+    wxBoxSizer *    m_online_toolbar_sizer { nullptr };
+    wxBitmapButton *m_online_back_btn { nullptr };
+    wxBitmapButton *m_online_refresh_btn { nullptr };
+    wxBitmapButton *m_online_open_browser_btn { nullptr };
+    wxPanel *       m_online_container { nullptr };
+    wxBoxSizer *    m_online_container_sizer { nullptr };
+    int             m_online_toolbar_icon_px { 16 };
 
     wxMenu* m_tools_menu;
     wxMenuItem* m_tools_handle_navigation;

@@ -161,12 +161,6 @@ void MonitorPanel::init_timer()
     m_refresh_timer->SetOwner(this);
     m_refresh_timer->Start(REFRESH_INTERVAL);
     if (update_flag) { update_all();}
-
-    Slic3r::DeviceManager* dev = Slic3r::GUI::wxGetApp().getDeviceManager();
-    if (!dev) return;
-    MachineObject *obj_ = dev->get_selected_machine();
-    if (obj_)
-        GUI::wxGetApp().sidebar().load_ams_list(obj_->get_dev_id(), obj_);
 }
 
 void MonitorPanel::init_tabpanel()
@@ -236,9 +230,6 @@ void MonitorPanel::set_default()
 
     /* reset side tool*/
     //m_bitmap_wifi_signal->SetBitmap(wxNullBitmap);
-
-    wxGetApp().sidebar().load_ams_list({}, {});
-    wxGetApp().sidebar().update_sync_status(nullptr);
 }
 
 wxWindow* MonitorPanel::create_side_tools()
@@ -312,11 +303,10 @@ void MonitorPanel::on_select_printer(wxCommandEvent& event)
 
     MachineObject *obj_ = dev->get_selected_machine();
     if (obj_) {
-        obj_->last_cali_version = -1;
-        obj_->reset_pa_cali_history_result();
-        obj_->reset_pa_cali_result();
+        obj_->GetCalib()->ResetCalibVersion();
+        obj_->GetCalib()->ResetPAHistory();
+        obj_->GetCalib()->ResetFlowRateResult();
         Sidebar &sidebar = GUI::wxGetApp().sidebar();
-        sidebar.load_ams_list(obj_->get_dev_id(), obj_);
         sidebar.update_sync_status(obj_);
         sidebar.set_need_auto_sync_after_connect_printer(sidebar.need_auto_sync_extruder_list_after_connect_priner(obj_));
     }
@@ -366,6 +356,7 @@ void MonitorPanel::update_all()
         show_status((int)MONITOR_NO_PRINTER);
         m_hms_panel->clear_hms_tag();
         m_tabpanel->GetBtnsListCtrl()->showNewTag(3, false);
+        m_status_info_panel->m_media_play_ctrl->SetMachineObject(obj);
         m_status_info_panel->update(obj);
         return;
     }
@@ -393,9 +384,11 @@ void MonitorPanel::update_all()
 
     auto current_page = m_tabpanel->GetCurrentPage();
     if (current_page == m_status_info_panel) {
-        m_status_info_panel->obj = obj;
-        m_status_info_panel->m_media_play_ctrl->SetMachineObject(obj);
-        m_status_info_panel->update(obj);
+        if (m_status_info_panel->IsShown()) {
+            m_status_info_panel->obj = obj;
+            m_status_info_panel->m_media_play_ctrl->SetMachineObject(obj);
+            m_status_info_panel->update(obj);
+        }
     } else if (current_page == m_upgrade_panel) {
         m_upgrade_panel->update(obj);
     } else if (current_page == m_media_file_panel) {
@@ -448,12 +441,8 @@ bool MonitorPanel::Show(bool show)
             obj = dev->get_selected_machine();
             if (obj == nullptr) {
                 dev->load_last_machine();
-                obj = dev->get_selected_machine();
-                if (obj && obj->is_info_ready(false))
-                    GUI::wxGetApp().sidebar().load_ams_list(obj->get_dev_id(), obj);
             } else {
                 obj->reset_update_time();
-                //select_machine(obj->get_dev_id());
             }
         }
     } else {
@@ -470,7 +459,8 @@ void MonitorPanel::show_status(int status)
     if ((last_status & (int)MonitorStatus::MONITOR_CONNECTING) != 0) {
         NetworkAgent* agent = wxGetApp().getAgent();
         json j;
-        j["dev_id"] = obj ? obj->get_dev_id() : "obj_nullptr";
+        //j["dev_id"] = obj ? obj->get_dev_id() : "obj_nullptr";
+        j["dev_id"] = "";
         if ((status & (int)MonitorStatus::MONITOR_DISCONNECTED) != 0) {
             j["result"] = "failed";
             if (agent) {
@@ -544,6 +534,16 @@ void MonitorPanel::jump_to_HMS()
         m_tabpanel->SetSelection(PT_HMS);
 }
 
+void MonitorPanel::jump_to_Upgrade()
+{
+    if (this->IsShown()) {
+        auto page = m_tabpanel->GetCurrentPage();
+        if (page && page != m_upgrade_panel) {
+            m_tabpanel->SetSelection(PT_UPDATE);
+        }
+    }
+}
+
 void MonitorPanel::jump_to_LiveView()
 {
     if (!this->IsShown()) { return; }
@@ -555,6 +555,20 @@ void MonitorPanel::jump_to_LiveView()
     }
 
     m_status_info_panel->get_media_play_ctrl()->jump_to_play();
+}
+
+void MonitorPanel::jump_to_Rack()
+{
+    if (!this->IsShown()) {
+        return;
+    }
+
+    auto page = m_tabpanel->GetCurrentPage();
+    if (page && page != m_status_info_panel) {
+        m_tabpanel->SetSelection(PT_STATUS);
+    }
+
+    m_status_info_panel->jump_to_Rack();
 }
 
 } // GUI

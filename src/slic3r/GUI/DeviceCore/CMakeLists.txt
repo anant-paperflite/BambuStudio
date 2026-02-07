@@ -4,8 +4,16 @@
 # status -- Building
 
 list(APPEND SLIC3R_GUI_SOURCES
+    GUI/DeviceCore/DevAxis.h
+    GUI/DeviceCore/DevAxis.cpp
+    GUI/DeviceCore/DevAxisCtrl.cpp
     GUI/DeviceCore/DevBed.cpp
     GUI/DeviceCore/DevBed.h
+    GUI/DeviceCore/DevCalib.h
+    GUI/DeviceCore/DevCalib.cpp
+    GUI/DeviceCore/DevChamber.h
+    GUI/DeviceCore/DevChamber.cpp
+    GUI/DeviceCore/DevChamberCtrl.cpp
     GUI/DeviceCore/DevConfig.h
     GUI/DeviceCore/DevConfig.cpp
     GUI/DeviceCore/DevConfigUtil.h
@@ -13,6 +21,8 @@ list(APPEND SLIC3R_GUI_SOURCES
     GUI/DeviceCore/DevCtrl.h
     GUI/DeviceCore/DevCtrl.cpp
     GUI/DeviceCore/DevDefs.h
+    GUI/DeviceCore/DevExtensionTool.h
+    GUI/DeviceCore/DevExtensionTool.cpp
     GUI/DeviceCore/DevExtruderSystem.h
     GUI/DeviceCore/DevExtruderSystem.cpp
     GUI/DeviceCore/DevExtruderSystemCtrl.cpp
@@ -20,10 +30,12 @@ list(APPEND SLIC3R_GUI_SOURCES
     GUI/DeviceCore/DevFan.h
     GUI/DeviceCore/DevFilaAmsSetting.h
     GUI/DeviceCore/DevFilaAmsSetting.cpp
+    GUI/DeviceCore/DevFilaAmsSettingCtrl.cpp
     GUI/DeviceCore/DevFilaBlackList.h
     GUI/DeviceCore/DevFilaBlackList.cpp
     GUI/DeviceCore/DevFilaSystem.h
     GUI/DeviceCore/DevFilaSystem.cpp
+    GUI/DeviceCore/DevFilaSystemCtrl.cpp
     GUI/DeviceCore/DevFirmware.h
     GUI/DeviceCore/DevFirmware.cpp
     GUI/DeviceCore/DevPrintOptions.h
@@ -32,8 +44,6 @@ list(APPEND SLIC3R_GUI_SOURCES
     GUI/DeviceCore/DevPrintTaskInfo.cpp
     GUI/DeviceCore/DevHMS.h
     GUI/DeviceCore/DevHMS.cpp
-    GUI/DeviceCore/DevStorage.h
-    GUI/DeviceCore/DevStorage.cpp
     GUI/DeviceCore/DevInfo.h
     GUI/DeviceCore/DevInfo.cpp
     GUI/DeviceCore/DevLamp.h
@@ -43,10 +53,23 @@ list(APPEND SLIC3R_GUI_SOURCES
     GUI/DeviceCore/DevManager.cpp
     GUI/DeviceCore/DevMapping.h
     GUI/DeviceCore/DevMapping.cpp
+    GUI/DeviceCore/DevMappingNozzle.cpp
+    GUI/DeviceCore/DevNozzleRack.h
+    GUI/DeviceCore/DevNozzleRack.cpp
+    GUI/DeviceCore/DevNozzleRackCtrl.cpp
     GUI/DeviceCore/DevNozzleSystem.h
     GUI/DeviceCore/DevNozzleSystem.cpp
+    GUI/DeviceCore/DevStatus.h
+    GUI/DeviceCore/DevStatus.cpp
+    GUI/DeviceCore/DevStorage.h
+    GUI/DeviceCore/DevStorage.cpp
+    GUI/DeviceCore/DevUpgrade.h
+    GUI/DeviceCore/DevUpgrade.cpp
+    GUI/DeviceCore/DevUpgradeCtrl.cpp
     GUI/DeviceCore/DevUtil.h
     GUI/DeviceCore/DevUtil.cpp
+    GUI/DeviceCore/DevUtilBackend.h
+    GUI/DeviceCore/DevUtilBackend.cpp
 
 )
 set(SLIC3R_GUI_SOURCES ${SLIC3R_GUI_SOURCES} PARENT_SCOPE)

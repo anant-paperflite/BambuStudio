@@ -83,7 +83,6 @@ wxDEFINE_EVENT(EVT_USER_LOGIN_HANDLE, wxCommandEvent);
 wxDEFINE_EVENT(EVT_CHECK_PRIVACY_VER, wxCommandEvent);
 wxDEFINE_EVENT(EVT_CHECK_PRIVACY_SHOW, wxCommandEvent);
 wxDEFINE_EVENT(EVT_SHOW_IP_DIALOG, wxCommandEvent);
-wxDEFINE_EVENT(EVT_SET_SELECTED_MACHINE, wxCommandEvent);
 wxDEFINE_EVENT(EVT_UPDATE_MACHINE_LIST, wxCommandEvent);
 wxDEFINE_EVENT(EVT_UPDATE_PRESET_CB, SimpleEvent);
 
@@ -904,17 +903,9 @@ void MainFrame::update_layout()
         {
             // jump to 3deditor under preview_only mode
             if (evt.GetId() == tp3DEditor){
-                Sidebar& sidebar = GUI::wxGetApp().sidebar();
-                if (sidebar.need_auto_sync_after_connect_printer()) {
-                    sidebar.set_need_auto_sync_after_connect_printer(false);
-                    sidebar.sync_extruder_list();
-                }
-
-                m_plater->update(true);
-
-                m_plater->show_wrapping_detect_dialog_if_necessary();
-
-                if (!preview_only_hint())
+                wxCommandEvent event(EVT_SWITCH_TO_PREPARE_TAB);
+                wxPostEvent(m_plater, event);
+                if(!preview_only_hint())
                     return;
             }
             else if (evt.GetId() == tpCalibration) {
@@ -1091,6 +1082,8 @@ void MainFrame::show_option(bool show)
             m_print_btn->Hide();
             m_slice_option_btn->Hide();
             m_print_option_btn->Hide();
+            split_line_icon->Hide();
+            expand_program_holder->Hide();
             Layout();
         }
     } else {
@@ -1099,6 +1092,8 @@ void MainFrame::show_option(bool show)
             m_print_btn->Show();
             m_slice_option_btn->Show();
             m_print_option_btn->Show();
+            split_line_icon->Show();
+            expand_program_holder->Show();
             Layout();
         }
     }
@@ -1122,6 +1117,23 @@ void MainFrame::init_tabpanel()
     m_tabpanel->Bind(wxEVT_NOTEBOOK_PAGE_CHANGING, [this](wxBookCtrlEvent& e) {
         int old_sel = e.GetOldSelection();
         int new_sel = e.GetSelection();
+        if (old_sel != wxNOT_FOUND &&
+            new_sel != old_sel &&
+            m_project != nullptr &&
+            m_tabpanel->GetPage((size_t)old_sel) == m_project &&
+            m_project->is_editing_page()) {
+            MessageDialog dlg(this,
+                              _L("The current page has unsaved changes. You can continue editing or choose to save/discard before leaving."),
+                              _L("Save"),
+                              wxYES_NO | wxCANCEL |wxCENTRE);
+            int ret = dlg.ShowModal();
+            if (ret == wxID_YES) {
+                m_project->save_project();
+            } else {
+                e.Veto();
+                return;
+            }
+        }
         if (wxGetApp().preset_bundle &&
             wxGetApp().preset_bundle->printers.get_edited_preset().is_bbl_vendor_preset(wxGetApp().preset_bundle) &&
             new_sel == tpMonitor) {
@@ -1176,6 +1188,10 @@ void MainFrame::init_tabpanel()
 #else
     m_tabpanel->Bind(wxEVT_NOTEBOOK_PAGE_CHANGED, [this](wxBookCtrlEvent& e) {
 #endif
+        if (e.GetEventObject() != m_tabpanel){
+            return;// The event maybe from child TabPanel
+        }
+
         //BBS
         wxWindow* panel = m_tabpanel->GetCurrentPage();
         int sel = m_tabpanel->GetSelection();
@@ -1671,6 +1687,40 @@ wxBoxSizer* MainFrame::create_side_tools()
     int em = em_unit();
     wxBoxSizer* sizer = new wxBoxSizer(wxHORIZONTAL);
 
+    /*helio*/
+    split_line_icon = new wxStaticBitmap(this, wxID_ANY, create_scaled_bitmap("topbar_line", this, 22), wxDefaultPosition, wxSize(FromDIP(3), FromDIP(22)), 0);
+    expand_program_holder = new ExpandButtonHolder(this);
+    expand_program_holder->addExpandButton(expand_helio_id, "helio_icon");
+    expand_program_holder->addExpandButton(expand_program_id, "expand_program");
+    expand_program_holder->Bind(wxEXPAND_LEFT_DOWN, [=](const wxCommandEvent& e) {
+
+        if (e.GetInt() == expand_helio_id) {
+            BOOST_LOG_TRIVIAL(info) << "Helio button clicked";
+            Plater* plater = wxGetApp().plater();
+            wxCommandEvent evt(EVT_HELIO_INPUT_DLG);
+            evt.SetEventObject(plater);
+            wxPostEvent(plater, evt);
+        }
+
+        if (e.GetInt() == expand_program_id) {
+            ExpandCenterDialog dlg;
+            dlg.ShowModal();
+        }
+        });
+
+    if (wxGetApp().app_config->get("helio_enable") == "true") {
+        expand_program_holder->ShowExpandButton(expand_helio_id, true);
+    }
+    else {
+        expand_program_holder->ShowExpandButton(expand_helio_id, false);
+    }
+
+    // Set tooltip for Helio expand button
+    expand_program_holder->SetExpandButtonRichTooltip(expand_helio_id, "monitor_speed", _L("Unlock faster, more reliable, warp-free prints with Helio Additive."));
+    // Set tooltip for program expand button (same tooltip as Helio for consistency)
+    expand_program_holder->SetExpandButtonRichTooltip(expand_program_id, "monitor_speed", _L("Unlock faster, more reliable, warp-free prints with Helio Additive."));
+
+    /*slice*/
     m_slice_select = eSlicePlate;
     m_print_select = ePrintPlate;
 
@@ -1695,10 +1745,15 @@ wxBoxSizer* MainFrame::create_side_tools()
     update_side_button_style();
     m_slice_option_btn->Enable();
     m_print_option_btn->Enable();
-    sizer->Add(FromDIP(15), 0, 0, 0, 0);
+    sizer->Add( 0, 0, 1, wxEXPAND, 0);
+    sizer->Add(expand_program_holder, 0, wxALIGN_CENTER, 0);
+    sizer->Add(FromDIP(4), 0, 0, 0, 0);
+    sizer->Add(split_line_icon, 0, wxALIGN_CENTER, 0);
+    sizer->Add(FromDIP(10), 0, 0, 0, 0);
     sizer->Add(slice_panel);
     sizer->Add(FromDIP(15), 0, 0, 0, 0);
     sizer->Add(print_panel);
+    sizer->Add(FromDIP(4), 0, 0, 0, 0);
     sizer->Add(FromDIP(19), 0, 0, 0, 0);
 
     sizer->Layout();
@@ -1746,6 +1801,7 @@ wxBoxSizer* MainFrame::create_side_tools()
             m_plater->reset_check_status();
             if (!m_plater->check_ams_status(m_slice_select == eSliceAll))
                 return;
+            m_plater->set_slice_from_slice_btn(true);
 
             //this->m_plater->select_view_3D("Preview");
             m_plater->exit_gizmo();
@@ -1762,9 +1818,10 @@ wxBoxSizer* MainFrame::create_side_tools()
 
             if (slice) {
                 std::string printer_model = wxGetApp().preset_bundle->printers.get_edited_preset().config.opt_string("printer_model");
-                if (printer_model == "Bambu Lab H2D") {
+                int extruder_count = wxGetApp().preset_bundle->get_printer_extruder_count();
+                if (extruder_count > 1) {
                     if (wxGetApp().app_config->get("play_slicing_video") == "true") {
-                        MessageDialog dlg(this, _L("This is your first time slicing with the H2D machine.\nWould you like to watch a quick tutorial video?"), _L("First Guide"), wxYES_NO);
+                        MessageDialog dlg(this, _L("This is your first time slicing with the dual extruder machine.\nWould you like to watch a quick tutorial video?"), _L("First Guide"), wxYES_NO);
                         auto  res = dlg.ShowModal();
                         if (res == wxID_YES) {
                             play_dual_extruder_slice_video();
@@ -1773,13 +1830,13 @@ wxBoxSizer* MainFrame::create_side_tools()
                         wxGetApp().app_config->set("play_slicing_video", "false");
                     }
 
-                    if ((wxGetApp().app_config->get("play_tpu_printing_video") == "true") ) {
+                    if ((wxGetApp().app_config->get("play_tpu_printing_video") == "true")) {
                         auto used_filaments = curr_plate->get_extruders();
                         std::transform(used_filaments.begin(), used_filaments.end(), used_filaments.begin(), [](auto i) {return i - 1; });
                         auto full_config = wxGetApp().preset_bundle->full_config();
                         auto filament_types = full_config.option<ConfigOptionStrings>("filament_type")->values;
                         if (std::any_of(used_filaments.begin(), used_filaments.end(), [filament_types](int idx) { return filament_types[idx] == "TPU"; })) {
-                            MessageDialog dlg(this, _L("This is your first time printing tpu filaments with the H2D machine.\nWould you like to watch a quick tutorial video?"), _L("First Guide"), wxYES_NO);
+                            MessageDialog dlg(this, _L("This is your first time printing tpu filaments with the dual extruder machine.\nWould you like to watch a quick tutorial video?"), _L("First Guide"), wxYES_NO);
                             auto  res = dlg.ShowModal();
                             if (res == wxID_YES) {
                                 play_dual_extruder_print_tpu_video();
@@ -2277,7 +2334,15 @@ void MainFrame::update_slice_print_status(SlicePrintEventType event, bool can_sl
     m_slice_enable = enable_slice;
     m_print_enable = enable_print;
 
+    /*for healio*/
+    if (expand_program_holder) {
+        expand_program_holder->updateExpandButtonBitmap(expand_helio_id, m_print_enable?"helio_icon":"helio_icon_disable");
+        expand_program_holder->EnableExpandButton(expand_helio_id, m_print_enable);
+    }
+
+
     if (!old_slice_status && enable_slice)
+        m_plater->stop_helio_process();
         m_plater->reset_check_status();
 }
 
@@ -2306,6 +2371,7 @@ void MainFrame::on_dpi_changed(const wxRect& suggested_rect)
     m_print_btn->Rescale();
     m_slice_option_btn->Rescale();
     m_print_option_btn->Rescale();
+    expand_program_holder->msw_rescale();
 
     // update Plater
     wxGetApp().plater()->msw_rescale();
@@ -2947,7 +3013,7 @@ void MainFrame::init_menubar_as_editor()
             [this](wxCommandEvent&) { m_plater->show_view3D_labels(!m_plater->are_view3D_labels_shown()); m_plater->get_current_canvas3D()->post_event(SimpleEvent(wxEVT_PAINT)); }, this,
             [this]() { return m_plater->is_view3D_shown(); }, [this]() { return m_plater->are_view3D_labels_shown(); }, this);
 
-        append_menu_check_item(viewMenu, wxID_ANY, _L("Show &Overhang"), _L("Show object overhang highlight in 3D scene"),
+        append_menu_check_item(viewMenu, wxID_ANY, _L("Show &Overhang") + "\t" + ctrl + "L", _L("Show object overhang highlight in 3D scene"),
             [this](wxCommandEvent &) {
                 m_plater->show_view3D_overhang(!m_plater->is_view3D_overhang_shown());
                 m_plater->get_current_canvas3D()->post_event(SimpleEvent(wxEVT_PAINT));
@@ -3515,7 +3581,7 @@ void MainFrame::update_calibration_button_status()
     bool isBBL = printer_preset.is_bbl_vendor_preset(wxGetApp().preset_bundle);
     bool is_multi_extruder = wxGetApp().preset_bundle->get_printer_extruder_count() > 1;
     // Show calibration Menu for BBL printers if Develop Mode is on.
-    bool show_calibration = (!isBBL || wxGetApp().app_config->get("developer_mode") == "true") && !is_multi_extruder;
+    bool show_calibration = (!isBBL || wxGetApp().app_config->get("developer_mode") == "true");
     wxGetApp().mainframe->show_calibration_button(show_calibration, isBBL);
 }
 

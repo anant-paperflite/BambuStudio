@@ -33,6 +33,8 @@ protected:
     ComboBox* nozzle_flow_type_checkbox;
     Label    *change_nozzle_tips;
     Label* m_wiki_link;
+    Button* m_single_update_nozzle_button;
+    Button* m_multiple_update_nozzle_button;
 
     ComboBox* multiple_left_nozzle_type_checkbox;
     ComboBox *multiple_left_nozzle_diameter_checkbox;
@@ -55,14 +57,22 @@ public:
     void on_dpi_changed(const wxRect& suggested_rect) override;
     void update_machine_obj(MachineObject* obj_);
     bool Show(bool show) override;
+    void UpdateNozzleInfo();
 
 private:
     void  EnableEditing(bool enable);
     void  OnWikiClicked(wxMouseEvent& e);
+    void  OnNozzleRefresh(wxCommandEvent& e);
 
     wxString GetString(NozzleType nozzle_type) const;
     wxString GetString(NozzleFlowType nozzle_flow_type) const;
     wxString GetString(float diameter) const { return wxString::FromDouble(diameter); };
+};
+
+class PrintOptionToast : public wxPopupWindow
+{
+public:
+    PrintOptionToast(wxWindow* parent, const wxString& text);
 };
 
 
@@ -79,14 +89,17 @@ protected:
     CheckBox* m_cb_airprinting_detection;
     CheckBox* m_cb_plate_mark;
     CheckBox* m_cb_auto_recovery;
-    CheckBox* m_cb_open_door;
     CheckBox* m_cb_save_remote_print_file_to_storage;
     CheckBox* m_cb_sup_sound;
     CheckBox* m_cb_filament_tangle;
     CheckBox* m_cb_nozzle_blob;
+    CheckBox* m_cb_open_door;
+    CheckBox* m_cb_purify_air_at_print_end;
+    CheckBox *m_cb_non_visual_airprinting_detection;
     Label* text_first_layer;
     Label* text_ai_detections;
     Label* text_ai_detections_caption;
+    Label* text_non_visual_airprinting_detection;
     wxPanel          *ai_refine_panel;
     wxSizerItem *ai_detections_bottom_space;
     wxSizerItem *ai_monitoring_bottom_space;
@@ -120,13 +133,16 @@ protected:
     Label* text_plate_mark;
     Label* text_plate_mark_caption;
     Label* text_auto_recovery;
-    Label* text_open_door;
     Label* text_save_remote_print_file_to_storage;
     Label* text_save_remote_print_file_to_storage_explain;
     Label* text_sup_sound;
     Label* text_filament_tangle;
     Label* text_nozzle_blob;
     Label* text_nozzle_blob_caption;
+    Label* text_open_door;
+    Label* text_open_door_caption;
+    Label* text_purify_air;
+    Label* text_purify_air_context;
     StaticLine* line1;
     StaticLine* line2;
     StaticLine* line3;
@@ -135,11 +151,29 @@ protected:
     StaticLine* line6;
     StaticLine* line7;
     SwitchBoard* open_door_switch_board;
+    SwitchBoard *purify_air_switch_board;
     wxBoxSizer* create_settings_group(wxWindow* parent);
     wxPanel     *m_line;
 
+    Label* text_plate_build{nullptr};
+    Label* text_plate_build_caption{nullptr};
+    CheckBox* m_cb_plate_type{nullptr};
+    Label* text_plate_type{nullptr};
+    Label* text_plate_type_caption{nullptr};
+    CheckBox* m_cb_plate_align{nullptr};
+    Label* text_plate_align{nullptr};
+    Label* text_plate_align_caption{nullptr};
+
+    wxBoxSizer* m_snapshot_sizer {nullptr};
+    CheckBox* m_cb_snapshot_enable{nullptr};
+
 
     bool print_halt = false;
+
+    //print option toast
+    PrintOptionToast *m_print_option_toast{nullptr};
+    bool           m_print_option_disable{false};
+    wxTimer          *m_print_option_timer;
 
 public:
     PrintOptionsDialog(wxWindow* parent);
@@ -152,6 +186,9 @@ public:
     void update_purgechutepileup_detection_status();
     void update_nozzleclumping_detection_status();
     void update_airprinting_detection_status();
+    void update_purify_air_at_print_end(MachineObject *obj_);
+    void show_print_option_toast(const wxString &text);
+    void purify_air_bind_toast();
 
     MachineObject *obj { nullptr };
 
@@ -177,8 +214,9 @@ public:
     void set_airprinting_detection_sensitivity(wxCommandEvent &evt);
 
 private:
-    void UpdateOptionOpenDoorCheck(MachineObject *obj);
     void UpdateOptionSavePrintFileToStorage(MachineObject *obj);
+    void UpdateOptionOpenDoorCheck(MachineObject *obj);
+    void UpdateOptionSnapshot(MachineObject *obj);
 };
 
 }} // namespace Slic3r::GUI

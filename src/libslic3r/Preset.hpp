@@ -53,6 +53,7 @@
 #define BBL_JSON_KEY_FILAMENT_ID    "filament_id"
 #define BBL_JSON_KEY_UPDATE_TIME    "updated_time"
 #define BBL_JSON_KEY_INHERITS       "inherits"
+#define BBL_JSON_KEY_INCLUDES       "include"
 #define BBL_JSON_KEY_INSTANTIATION  "instantiation"
 #define BBL_JSON_KEY_NOZZLE_DIAMETER            "nozzle_diameter"
 #define BBL_JSON_KEY_PRINTER_TECH                 "machine_tech"
@@ -63,7 +64,9 @@
 #define BBL_JSON_KEY_IMAGE_BED_TYPE             "image_bed_type"
 #define BBL_JSON_KEY_DEFAULT_BED_TYPE           "default_bed_type"
 #define BBL_JSON_KEY_BOTTOM_TEXTURE_END_NAME    "bottom_texture_end_name"
+#define BBL_JSON_KEY_USE_DOUBLE_EXTRUDER_DEFAULT_TEXTURE  "use_double_extruder_default_texture"
 #define BBL_JSON_KEY_BOTTOM_TEXTURE_RECT        "bottom_texture_rect"
+#define BBL_JSON_KEY_BOTTOM_TEXTURE_RECT_LONGER  "bottom_texture_rect_longer"
 #define BBL_JSON_KEY_MIDDLE_TEXTURE_RECT        "middle_texture_rect"
 #define BBL_JSON_KEY_RIGHT_ICON_OFFSET_BED      "right_icon_offset_bed"
 
@@ -95,7 +98,7 @@ extern int get_values_from_json(std::string file_path, std::vector<std::string>&
 
 extern ConfigFileType guess_config_file_type(const boost::property_tree::ptree &tree);
 
-extern void extend_default_config_length(DynamicPrintConfig& config, const bool set_nil_to_default, const DynamicPrintConfig& defaults);
+extern void extend_default_config_length(DynamicPrintConfig &config, const DynamicPrintConfig &inherit_config, const bool set_nil_to_default, const DynamicPrintConfig &defaults);
 
 class VendorProfile
 {
@@ -130,7 +133,9 @@ public:
         std::string                 image_bed_type;
         std::string                 default_bed_type;
         std::string                 bottom_texture_end_name;
+        std::string                 use_double_extruder_default_texture;
         std::string                 bottom_texture_rect;
+        std::string                 bottom_texture_rect_longer;
         std::string                 middle_texture_rect;
         std::string                 right_icon_offset_bed;
         std::string                 hotend_model;
@@ -142,6 +147,7 @@ public:
         }
 
         const PrinterVariant* variant(const std::string &name) const { return const_cast<PrinterModel*>(this)->variant(name); }
+        std::map<std::string, std::string> get_bed_texture_maps() const;
     };
     std::vector<PrinterModel>          models;
 
@@ -702,12 +708,15 @@ public:
     // Select a profile by its name. Return true if the selection changed.
     // Without force, the selection is only updated if the index changes.
     // With force, the changes are reverted if the new index is the same as the old index.
-    bool            select_preset_by_name(const std::string &name, bool force);
+    bool            select_preset_by_name(const std::string &name, bool force, bool select_invisible = false);
     bool is_base_preset(const Preset &preset) const { return preset.is_system || (preset.is_user() && preset.inherits().empty()); }
 
     // Generate a file path from a profile name. Add the ".ini" suffix if it is missing.
     std::string     path_from_name(const std::string &new_name, bool detach = false) const;
     std::string     path_for_preset(const Preset & preset) const;
+
+    // Get the alias of a preset, setting it if it's empty
+    std::string     get_preset_alias(Preset &preset, bool force = false);
 
     size_t num_default_presets() { return m_num_default_presets; }
 

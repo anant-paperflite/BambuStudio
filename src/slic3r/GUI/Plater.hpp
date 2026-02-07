@@ -118,10 +118,13 @@ wxDECLARE_EVENT(EVT_NOTICE_CHILDE_SIZE_CHANGED, SimpleEvent);
 wxDECLARE_EVENT(EVT_NOTICE_FULL_SCREEN_CHANGED, IntEvent);
 using ColorEvent = Event<wxColour>;
 wxDECLARE_EVENT(EVT_ADD_CUSTOM_FILAMENT, ColorEvent);
+wxDECLARE_EVENT(EVT_SWITCH_TO_PREPARE_TAB, wxCommandEvent);
 
+// helio
 wxDECLARE_EVENT(EVT_HELIO_PROCESSING_COMPLETED, HelioCompletionEvent);
 wxDECLARE_EVENT(EVT_HELIO_PROCESSING_STARTED, SimpleEvent);
-wxDECLARE_EVENT(EVT_HELIO_INPUT_CHAMBER_TEMP, SimpleEvent);
+wxDECLARE_EVENT(EVT_HELIO_INPUT_DLG, SimpleEvent);
+// end helio
 wxDECLARE_EVENT(EVT_GCODE_VIEWER_CHANGED, SimpleEvent);
 
 const wxString DEFAULT_PROJECT_NAME = "Untitled";
@@ -162,11 +165,12 @@ public:
     //void update_partplate(PartPlateList& list);
     void update_presets(Slic3r::Preset::Type preset_type);
     //BBS
+    const std::vector<BedType>& get_cur_combox_bed_types() { return m_cur_combox_bed_types; }
     void update_presets_from_to(Slic3r::Preset::Type preset_type, std::string from, std::string to);
     bool set_bed_type(const std::string& bed_type_name);
     void save_bed_type_to_config(const std::string &bed_type_name);
     BedType get_cur_select_bed_type();
-    std::string get_cur_select_bed_image();
+    std::string get_cur_select_bed_image(bool& exist);
     void set_bed_type_accord_combox(BedType bed_type);
     bool reset_bed_type_combox_choices(bool is_sidebar_init = false);
     bool use_default_bed_type(bool is_bbl_preset = true);
@@ -188,7 +192,7 @@ public:
     bool is_new_project_in_gcode3mf();
     // BBS
     void on_bed_type_change(BedType bed_type);
-    void load_ams_list(std::string const & device, MachineObject* obj);
+    void load_ams_list(MachineObject* obj);
     std::map<int, DynamicPrintConfig> build_filament_ams_list(MachineObject* obj);
     void sync_ams_list(bool is_from_big_sync_btn = false);
     bool sync_extruder_list();
@@ -199,6 +203,9 @@ public:
     void on_full_screen(IntEvent &);
     void get_big_btn_sync_pos_size(wxPoint &pt, wxSize &size);
     void get_small_btn_sync_pos_size(wxPoint &pt, wxSize &size);
+    void set_extruder_nozzle_count(int extruder_id, int nozzle_count);
+    void enable_nozzle_count_edit(bool enable);
+    void enable_purge_mode_btn(bool enable);
 
     PlaterPresetComboBox *  printer_combox();
     ObjectList*             obj_list();
@@ -210,6 +217,7 @@ public:
 
     ConfigOptionsGroup*     og_freq_chng_params(const bool is_fff);
     wxButton*               get_wiping_dialog_button();
+    void                    set_flushing_volume_warning(const bool flushing_volume_modify);
 
     // BBS
     void                    enable_buttons(bool enable);
@@ -274,6 +282,9 @@ private:
 
 class Plater: public wxPanel
 {
+    bool m_force_ban_check_volume_bbox_state_with_extruder_area{false};
+    bool m_last_is_system_preset{true};
+
 public:
     using fs_path = boost::filesystem::path;
 
@@ -321,6 +332,7 @@ public:
     void request_download_project(std::string project_id);
     // BBS: check snapshot
     bool up_to_date(bool saved, bool backup);
+    bool check_include_gcode();
 
     bool open_3mf_file(const fs::path &file_path);
     int  get_3mf_file_count(std::vector<fs::path> paths);
@@ -358,15 +370,17 @@ public:
     bool is_empty_project();
     bool is_multi_extruder_ams_empty();
     // BBS
+    bool is_new_project_and_check_state() { return m_new_project_and_check_state; }
     wxString get_project_name();
     void update_all_plate_thumbnails(bool force_update = false);
-    void update_obj_preview_thumbnail(ModelObject *, int obj_idx, int vol_idx, std::vector<std::array<float, 4>> colors, int camera_view_angle_type);
+    void update_obj_preview_origin_thumbnail(ModelObjectPtrs &model_objects, std::vector<std::array<float, 4>> colors, int camera_view_angle_type);
+    void update_obj_preview_thumbnail(ModelObjectPtrs &model_objects, std::vector<std::array<float, 4>> colors, int camera_view_angle_type);
     void invalid_all_plate_thumbnails();
     void force_update_all_plate_thumbnails();
 
     const VendorProfile::PrinterModel * get_curr_printer_model();
     std::map<std::string, std::string> get_bed_texture_maps();
-    int                                get_right_icon_offset_bed();
+    int                                get_right_icon_offset_bed(int i = 0);
     bool                               get_enable_wrapping_detection();
 
     static wxColour get_next_color_for_filament();
@@ -395,6 +409,7 @@ public:
     bool is_any_job_running() const;
     void select_view(const std::string& direction);
     //BBS: add no_slice logic
+    void set_slice_from_slice_btn(bool flag);
     void select_view_3D(const std::string& name, bool no_slice = true);
 
     void reload_paint_after_background_process_apply();
@@ -474,6 +489,8 @@ public:
     bool has_toolpaths_to_export() const;
     void export_toolpaths_to_obj() const;
     void reslice();
+    void stop_helio_process();
+    void feedback_helio_process(float rating, std::string commend);
     void record_slice_preset(std::string action);
     void reslice_SLA_supports(const ModelObject &object, bool postpone_error_messages = false);
     void reslice_SLA_hollowing(const ModelObject &object, bool postpone_error_messages = false);
@@ -508,11 +525,12 @@ public:
     //void take_snapshot(const wxString &snapshot_name);
     void take_snapshot(const std::string &snapshot_name, UndoRedo::SnapshotType snapshot_type);
     //void take_snapshot(const wxString &snapshot_name, UndoRedo::SnapshotType snapshot_type);
-
+    size_t get_active_snapshot_time();
     void undo();
     void redo();
     void undo_to(int selection);
     void redo_to(int selection);
+    void undo_redo_to(size_t time_to_load);
     bool undo_redo_string_getter(const bool is_undo, int idx, const char** out_text);
     void undo_redo_topmost_string_getter(const bool is_undo, std::string& out_text);
     int update_print_required_data(Slic3r::DynamicPrintConfig config, Slic3r::Model model, Slic3r::PlateDataPtrs plate_data_list, std::string file_name, std::string file_path);
@@ -535,6 +553,7 @@ public:
     bool update_filament_colors_in_full_config();
     void config_change_notification(const DynamicPrintConfig &config, const std::string& key);
     void on_config_change(const DynamicPrintConfig &config);
+    bool cur_selected_preset_is_system_preset();
     void force_filament_colors_update();
     void force_print_bed_update();
     // On activating the parent window.
@@ -543,11 +562,14 @@ public:
     std::vector<std::string> get_filament_colors_render_info() const;
     std::vector<std::string> get_filament_color_render_type() const;
     std::vector<std::string> get_colors_for_color_print(const GCodeProcessorResult* const result = nullptr) const;
+    bool is_color_size_equal() const;
 
     void set_global_filament_map_mode(FilamentMapMode mode);
     void set_global_filament_map(const std::vector<int>& filament_map);
+    void set_global_filament_volume_map(const std::vector<int>& volume_map);
     std::vector<int> get_global_filament_map() const;
     FilamentMapMode get_global_filament_map_mode() const;
+    std::vector<int> get_global_filament_volume_map() const;
 
     void update_menus();
     wxString get_selected_printer_name_in_combox();
@@ -577,6 +599,8 @@ public:
     GLCanvas3D* canvas3D();
     const GLCanvas3D * canvas3D() const;
     GLCanvas3D* get_current_canvas3D(bool exclude_preview = false);
+    bool        get_preview_min_max_value_of_option(int index, float &_min, float &_max);
+    int         get_gcode_layers_count();
     GLCanvas3D* get_view3D_canvas3D();
     GLCanvas3D* get_preview_canvas3D();
     GLCanvas3D* get_assmeble_canvas3D();
@@ -613,6 +637,18 @@ public:
     //BBS: add clone logic
     void clone_selection();
     void center_selection();
+    void distribute_selection_y();
+    void distribute_selection_x();
+    void distribute_selection_z();
+    void align_selection_y_max();
+    void align_selection_y_min();
+    void align_selection_y_center();
+    void align_selection_x_max();
+    void align_selection_x_min();
+    void align_selection_x_center();
+    void align_selection_z_max();
+    void align_selection_z_min();
+    void align_selection_z_center();
     void search(bool plater_is_active, Preset::Type  type, wxWindow *tag, TextInput *etag, wxWindow *stag);
     void mirror(Axis axis);
     void split_object();
@@ -638,6 +674,7 @@ public:
     bool can_set_instance_to_object() const;
     bool can_fix_through_netfabb() const;
     bool can_simplify() const;
+    bool can_smooth_mesh() const;
     bool can_split_to_objects() const;
     bool can_split_to_volumes() const;
     bool can_do_ui_job() const;
@@ -676,6 +713,7 @@ public:
     const Camera& get_picking_camera() const;
     Camera& get_picking_camera();
 
+    bool force_ban_check_volume_bbox_state_with_extruder_area();
     //BBS: partplate list related functions
     PartPlateList& get_partplate_list();
     void validate_current_plate(bool& model_fits, bool& validate_error);
@@ -684,7 +722,7 @@ public:
     //BBS: update progress result
     void apply_background_progress();
     //BBS: select the plate by hover_id
-    int select_plate_by_hover_id(int hover_id, bool right_click = false, bool isModidyPlateName = false);
+    int select_plate_by_hover_id(int hover_id, bool right_click = false, bool isModidyPlateName = false, bool is_swap_plate = false);
     //BBS: delete the plate, index= -1 means the current plate
     int delete_plate(int plate_index = -1);
     //BBS: select the sliced plate by index
@@ -702,6 +740,10 @@ public:
     //BBS Helio slice
     int  get_helio_process_status() const;
     void clear_helio_process_status() const;
+    // Check if simulation/optimization result is available for "View Summary"
+    bool has_helio_simulation_result() const;
+    // Show the Helio simulation/optimization summary dialog (returns true if shown, false if no result available)
+    bool show_helio_simulation_summary() const;
 
     //BBS
     bool show_publish_dialog(bool show = true);
@@ -712,8 +754,10 @@ public:
     bool check_ams_status(bool is_slice_all);
     // only check sync status and printer model id
     bool get_machine_sync_status();
-
+    // check whether nozzle staus is synced with printer, extruder = -1 means check both extruder
+    bool is_extruder_stat_synced(int extruder_id = -1);
     void update_machine_sync_status();
+    void update_filament_volume_map(int extruder_id, int volume_type);
 
     void show_wrapping_detect_dialog_if_necessary();
 
@@ -921,6 +965,7 @@ private:
     bool m_exported_file { false };
     bool skip_thumbnail_invalid { false };
     bool m_loading_project {false };
+    bool m_new_project_and_check_state{false};
     std::string m_preview_only_filename;
     int m_valid_plates_count { 0 };
     int m_check_status = 0; // 0 not check, 1 check success, 2 check failed

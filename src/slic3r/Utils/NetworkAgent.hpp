@@ -55,6 +55,7 @@ typedef std::string (*func_build_logout_cmd)(void *agent);
 typedef std::string (*func_build_login_info)(void *agent);
 typedef int (*func_ping_bind)(void *agent, std::string ping_code);
 typedef int (*func_bind_detect)(void *agent, std::string dev_ip, std::string sec_link, detectResult& detect);
+typedef int (*func_report_consent)(void *agent, std::string expand);
 typedef int (*func_set_server_callback)(void *agent, OnServerErrFn fn);
 typedef int (*func_bind)(void *agent, std::string dev_ip, std::string dev_id, std::string sec_link, std::string timezone, bool improved, OnUpdateStatusFn update_fn);
 typedef int (*func_unbind)(void *agent, std::string dev_id);
@@ -87,6 +88,7 @@ typedef int (*func_get_slice_info)(void *agent, std::string project_id, std::str
 typedef int (*func_query_bind_status)(void *agent, std::vector<std::string> query_list, unsigned int* http_code, std::string* http_body);
 typedef int (*func_modify_printer_name)(void *agent, std::string dev_id, std::string dev_name);
 typedef int (*func_get_camera_url)(void *agent, std::string dev_id, std::function<void(std::string)> callback);
+typedef int (*func_get_camera_url_for_golive)(void *agent, std::string dev_id, std::string sdev_id, std::function<void(std::string)> callback);
 typedef int (*func_get_design_staffpick)(void *agent, int offset, int limit, std::function<void(std::string)> callback);
 typedef int (*func_start_pubilsh)(void *agent, PublishParams params, OnUpdateStatusFn update_fn, WasCancelledFn cancel_fn, std::string* out);
 typedef int (*func_get_model_publish_url)(void *agent, std::string* url);
@@ -94,6 +96,7 @@ typedef int (*func_get_subtask)(void *agent, BBLModelTask* task, OnGetSubTaskFn 
 typedef int (*func_get_model_mall_home_url)(void *agent, std::string* url);
 typedef int (*func_get_model_mall_detail_url)(void *agent, std::string* url, std::string id);
 typedef int (*func_get_my_profile)(void *agent, std::string token, unsigned int *http_code, std::string *http_body);
+typedef int (*func_get_my_token)(void *agent, std::string ticket, unsigned int *http_code, std::string *http_body);
 typedef int (*func_track_enable)(void *agent, bool enable);
 typedef int (*func_track_remove_files)(void *agent);
 typedef int (*func_track_event)(void *agent, std::string evt_key, std::string content);
@@ -109,7 +112,7 @@ typedef int (*func_get_model_mall_rating_result)(void *agent, int job_id, std::s
 
 typedef int (*func_get_mw_user_preference)(void *agent, std::function<void(std::string)> callback);
 typedef int (*func_get_mw_user_4ulist)(void *agent, int seed, int limit, std::function<void(std::string)> callback);
-
+typedef int (*func_get_hms_snapshot)(void* agent, std::string& dev_id, std::string& file_name, std::function<void(std::string, int)> callback);
 
 //the NetworkAgent class
 class NetworkAgent
@@ -117,7 +120,7 @@ class NetworkAgent
 
 public:
     static std::string get_libpath_in_current_directory(std::string library_name);
-    static int initialize_network_module(bool using_backup = false);
+    static int initialize_network_module(bool using_backup = false, bool validate_cert = true);
     static int unload_network_module();
 #if defined(_MSC_VER) || defined(_WIN32)
     static HMODULE get_bambu_source_entry();
@@ -173,6 +176,7 @@ public:
     std::string build_login_info();
     int ping_bind(std::string ping_code);
     int bind_detect(std::string dev_ip, std::string sec_link, detectResult& detect);
+    int report_consent(std::string expand);
     int set_server_callback(OnServerErrFn fn);
     int bind(std::string dev_ip, std::string dev_id, std::string sec_link, std::string timezone, bool improved, OnUpdateStatusFn update_fn);
     int unbind(std::string dev_id);
@@ -205,6 +209,7 @@ public:
     int query_bind_status(std::vector<std::string> query_list, unsigned int* http_code, std::string* http_body);
     int modify_printer_name(std::string dev_id, std::string dev_name);
     int get_camera_url(std::string dev_id, std::function<void(std::string)> callback);
+    int get_camera_url_for_golive(std::string dev_id, std::string sdev_id, std::function<void(std::string)> callback);
     int get_design_staffpick(int offset, int limit, std::function<void(std::string)> callback);
     int start_publish(PublishParams params, OnUpdateStatusFn update_fn, WasCancelledFn cancel_fn, std::string* out);
     int get_model_publish_url(std::string* url);
@@ -212,6 +217,7 @@ public:
     int get_model_mall_home_url(std::string* url);
     int get_model_mall_detail_url(std::string* url, std::string id);
     int get_my_profile(std::string token, unsigned int* http_code, std::string* http_body);
+    int get_my_token(std::string ticket, unsigned int* http_code, std::string* http_body);
     int track_enable(bool enable);
     int track_remove_files();
     int track_event(std::string evt_key, std::string content);
@@ -226,6 +232,7 @@ public:
 
     int get_mw_user_preference(std::function<void(std::string)> callback);
     int get_mw_user_4ulist(int seed, int limit, std::function<void(std::string)> callback);
+    int get_hms_snapshot(std::string dev_id, std::string file_name, std::function<void(std::string, int)> callback);
     void *get_network_agent() { return network_agent; }
 
 private:
@@ -280,6 +287,7 @@ private:
     static func_build_login_info               build_login_info_ptr;
     static func_ping_bind                      ping_bind_ptr;
     static func_bind_detect                    bind_detect_ptr;
+    static func_report_consent                 report_consent_ptr;
     static func_set_server_callback            set_server_callback_ptr;
     static func_bind                           bind_ptr;
     static func_unbind                         unbind_ptr;
@@ -312,6 +320,7 @@ private:
     static func_query_bind_status              query_bind_status_ptr;
     static func_modify_printer_name            modify_printer_name_ptr;
     static func_get_camera_url                 get_camera_url_ptr;
+    static func_get_camera_url_for_golive      get_camera_url_for_golive_ptr;
     static func_get_design_staffpick           get_design_staffpick_ptr;
     static func_start_pubilsh                  start_publish_ptr;
     static func_get_model_publish_url          get_model_publish_url_ptr;
@@ -319,6 +328,7 @@ private:
     static func_get_model_mall_home_url        get_model_mall_home_url_ptr;
     static func_get_model_mall_detail_url      get_model_mall_detail_url_ptr;
     static func_get_my_profile                 get_my_profile_ptr;
+    static func_get_my_token                   get_my_token_ptr;
     static func_track_enable                   track_enable_ptr;
     static func_track_remove_files             track_remove_files_ptr;
     static func_track_event                    track_event_ptr;
@@ -332,6 +342,7 @@ private:
 
     static func_get_mw_user_preference get_mw_user_preference_ptr;
     static func_get_mw_user_4ulist     get_mw_user_4ulist_ptr;
+    static func_get_hms_snapshot       get_hms_snapshot_ptr;
 };
 
 }

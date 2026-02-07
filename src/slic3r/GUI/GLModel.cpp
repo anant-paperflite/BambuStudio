@@ -4,6 +4,7 @@
 #include "3DScene.hpp"
 #include "GUI_App.hpp"
 #include "GLShader.hpp"
+#include "OpenGLManager.hpp"
 
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/Model.hpp"
@@ -238,6 +239,9 @@ size_t GLModel::Geometry::vertex_stride_floats(const Format &format)
     case EVertexLayout::P3N3: {
         return 6;
     }
+    case EVertexLayout::P3N3C4: {
+        return 10;
+    }
     case EVertexLayout::P3N3T2: {
         return 8;
     }
@@ -261,6 +265,7 @@ size_t GLModel::Geometry::position_stride_floats(const Format &format)
     case EVertexLayout::P3:
     case EVertexLayout::P3T2:
     case EVertexLayout::P3N3:
+    case EVertexLayout::P3N3C4:
     case EVertexLayout::P3N3T2: {
         return 3;
     }
@@ -283,6 +288,7 @@ size_t GLModel::Geometry::position_offset_floats(const Format &format)
     case EVertexLayout::P3T2:
     case EVertexLayout::P3N3:
     case EVertexLayout::P3N3T2:
+    case EVertexLayout::P3N3C4:
     case EVertexLayout::P4: {
         return 0;
     }
@@ -297,6 +303,7 @@ size_t GLModel::Geometry::normal_stride_floats(const Format &format)
 {
     switch (format.vertex_layout) {
     case EVertexLayout::P3N3:
+    case EVertexLayout::P3N3C4:
     case EVertexLayout::P3N3T2: {
         return 3;
     }
@@ -311,6 +318,7 @@ size_t GLModel::Geometry::normal_offset_floats(const Format &format)
 {
     switch (format.vertex_layout) {
     case EVertexLayout::P3N3:
+    case EVertexLayout::P3N3C4:
     case EVertexLayout::P3N3T2: {
         return 3;
     }
@@ -355,6 +363,30 @@ size_t GLModel::Geometry::tex_coord_offset_floats(const Format &format)
     };
 }
 
+size_t GLModel::Geometry::vertice_color_stride_floats(const Format &format)
+{
+    switch (format.vertex_layout) {
+    case EVertexLayout::P3N3C4: {
+        return 4;
+    }
+    default: {
+        return 0;
+    }
+    };
+}
+
+size_t GLModel::Geometry::vertice_color_offset_floats(const Format &format)
+{
+    switch (format.vertex_layout) {
+    case EVertexLayout::P3N3C4: {
+        return 6;
+    }
+    default: {
+        return 0;
+    }
+    };
+}
+
 size_t GLModel::Geometry::index_stride_bytes(const Geometry &data)
 {
     switch (data.index_type) {
@@ -382,6 +414,7 @@ bool GLModel::Geometry::has_position(const Format &format)
     case EVertexLayout::P3:
     case EVertexLayout::P3T2:
     case EVertexLayout::P3N3:
+    case EVertexLayout::P3N3C4:
     case EVertexLayout::P3N3T2:
     case EVertexLayout::P4: {
         return true;
@@ -404,6 +437,7 @@ bool GLModel::Geometry::has_normal(const Format &format)
         return false;
     }
     case EVertexLayout::P3N3:
+    case EVertexLayout::P3N3C4:
     case EVertexLayout::P3N3T2: {
         return true;
     }
@@ -425,11 +459,24 @@ bool GLModel::Geometry::has_tex_coord(const Format &format)
     case EVertexLayout::P2:
     case EVertexLayout::P3:
     case EVertexLayout::P3N3:
+    case EVertexLayout::P3N3C4:
     case EVertexLayout::P4: {
         return false;
     }
     default: {
         assert(false);
+        return false;
+    }
+    };
+}
+
+bool GLModel::Geometry::has_vertice_color(const Format &format)
+{
+    switch (format.vertex_layout) {
+    case EVertexLayout::P3N3C4:{
+        return true;
+    }
+    default: {
         return false;
     }
     };
@@ -586,6 +633,47 @@ void GLModel::init_from(const indexed_triangle_set& its, const BoundingBoxf3 &bb
 void GLModel::init_from(const indexed_triangle_set& its)
 {
     this->init_from(its, bounding_box(its));
+}
+
+void GLModel::init_from_its_and_color(const indexed_triangle_set &its, const std::vector<RGBA> &colors)
+{
+    if (its.vertices.size() != colors.size()) { return; }
+    m_bounding_box = bounding_box(its);
+
+    if (!m_render_data.empty()) // call reset() if you want to reuse this model
+        return;
+
+    RenderData data;
+    data.geometry.format.vertex_layout       = Geometry::EVertexLayout::P3N3C4;
+    data.type                                = PrimitiveType::Triangles;
+    int                       vertice_layout = 10; // 3 vertice +3 normal+4 color
+    int                       byte_offset    = vertice_layout * 3;
+    std::vector<float>        vertices       = std::vector<float>(byte_offset * its.indices.size());
+    std::vector<unsigned int> indices        = std::vector<unsigned int>(3 * its.indices.size());
+
+    unsigned int vertices_count = 0;
+    for (uint32_t i = 0; i < its.indices.size(); ++i) {
+        stl_triangle_vertex_indices face = its.indices[i];
+        if (face[0] >= 0 && face[0] < its.vertices.size() && face[1] >= 0 && face[1] < its.vertices.size() && face[2] >= 0 && face[2] < its.vertices.size()) {
+            stl_vertex vertex[3] = {its.vertices[face[0]], its.vertices[face[1]], its.vertices[face[2]]};
+            stl_vertex n         = face_normal_normalized(vertex);
+            RGBA       color[3]  = {colors[face[0]], colors[face[1]], colors[face[2]]};
+            for (size_t j = 0; j < 3; ++j) {
+                size_t offset = i * byte_offset + j * vertice_layout; // float offset
+                ::memcpy(static_cast<void *>(&vertices[0 + offset]), static_cast<const void *>(vertex[j].data()), 3 * sizeof(float));
+                ::memcpy(static_cast<void *>(&vertices[3 + offset]), static_cast<const void *>(n.data()), 3 * sizeof(float));
+                ::memcpy(static_cast<void *>(&vertices[6 + offset]), static_cast<const void *>(color[j].data()), 4 * sizeof(float));
+            }
+            for (size_t j = 0; j < 3; ++j) indices[i * 3 + j] = vertices_count + j;
+            vertices_count += 3;
+        }
+    }
+
+    data.indices_count = static_cast<unsigned int>(indices.size());
+
+    send_to_gpu(data, vertices, indices);
+    m_render_data.emplace_back(data);
+
 }
 
 bool GLModel::init_from_file(const std::string& filename)
@@ -889,6 +977,77 @@ void GLModel::render_geometry(int i,const std::pair<size_t, size_t> &range) cons
     glsafe(::glBindBuffer(GL_ARRAY_BUFFER, 0));
 }
 
+void GLModel::render_geometry_with_vertice_color() const {
+    render_geometry_with_vertice_color(0, std::make_pair<size_t, size_t>(0, get_indices_count()));
+}
+
+void GLModel::render_geometry_with_vertice_color(int i, const std::pair<size_t, size_t> &range) const
+{
+    if (range.second == range.first) return;
+
+    const auto &                     p_opengl_mgr = wxGetApp().get_opengl_manager();
+    std::shared_ptr<GLShaderProgram> shader        = p_opengl_mgr->get_current_shader();
+    if (shader == nullptr) return;
+
+    auto &render_data = m_render_data[i];
+    // sends data to gpu if not done yet
+    if (render_data.vbo_id == 0 || render_data.ibo_id == 0) {
+        auto origin_data = const_cast<RenderData *>(&render_data);
+        if (render_data.geometry.vertices_count() > 0 && render_data.geometry.indices_count() > 0 &&
+            !send_to_gpu(*origin_data, render_data.geometry.vertices, render_data.geometry.indices))
+            return;
+    }
+    const Geometry &data = render_data.geometry;
+
+    const GLenum mode       = get_primitive_mode(data.format);
+    const GLenum index_type = get_index_type(data);
+
+    const size_t vertex_stride_bytes = Geometry::vertex_stride_bytes(data.format);
+    const bool   position            = Geometry::has_position(data.format);
+    const bool   normal              = Geometry::has_normal(data.format);
+    const bool   vertice_color       = Geometry::has_vertice_color(data.format);
+    glsafe(::glBindBuffer(GL_ARRAY_BUFFER, render_data.vbo_id));
+
+    int position_id  = -1;
+    int normal_id    = -1;
+    int vertice_color_id = -1;
+
+    if (position) {
+        position_id = shader->get_attrib_location("v_position");
+        if (position_id != -1) {
+            glsafe(::glVertexAttribPointer(position_id, Geometry::position_stride_floats(data.format), GL_FLOAT, GL_FALSE, vertex_stride_bytes,
+                                           (const void *) Geometry::position_offset_bytes(data.format)));
+            glsafe(::glEnableVertexAttribArray(position_id));
+        }
+    }
+    if (normal) {
+        normal_id = shader->get_attrib_location("v_normal");
+        if (normal_id != -1) {
+            glsafe(::glVertexAttribPointer(normal_id, Geometry::normal_stride_floats(data.format), GL_FLOAT, GL_FALSE, vertex_stride_bytes,
+                                           (const void *) Geometry::normal_offset_bytes(data.format)));
+            glsafe(::glEnableVertexAttribArray(normal_id));
+        }
+    }
+    if (vertice_color) {
+        vertice_color_id = shader->get_attrib_location("v_color");
+        if (vertice_color_id != -1) {
+            glsafe(::glVertexAttribPointer(vertice_color_id, Geometry::vertice_color_stride_floats(data.format), GL_FLOAT, GL_FALSE, vertex_stride_bytes,
+                                           (const void *) Geometry::vertice_color_offset_bytes(data.format)));
+            glsafe(::glEnableVertexAttribArray(vertice_color_id));
+        }
+    }
+
+    glsafe(::glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, render_data.ibo_id));
+    glsafe(::glDrawElements(mode, range.second - range.first, index_type, (const void *) (range.first * Geometry::index_stride_bytes(data))));
+    glsafe(::glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0));
+
+    if (normal_id != -1) glsafe(::glDisableVertexAttribArray(normal_id));
+    if (position_id != -1) glsafe(::glDisableVertexAttribArray(position_id));
+    if (vertice_color_id != -1) glsafe(::glDisableVertexAttribArray(vertice_color_id));
+
+    glsafe(::glBindBuffer(GL_ARRAY_BUFFER, 0));
+}
+
 void GLModel::create_or_update_mats_vbo(unsigned int &vbo, const std::vector<Slic3r::Geometry::Transformation> &mats)
 { // first bind
     if (vbo>0) {
@@ -943,7 +1102,7 @@ void GLModel::render_geometry_instance(unsigned int instance_mats_vbo, unsigned 
 
 void GLModel::render_geometry_instance(unsigned int instance_mats_vbo, unsigned int instances_count, const std::pair<size_t, size_t> &range)
 {
-    if (instance_mats_vbo == 0 || instances_count == 0) {
+    if (instances_count == 0) {
         return;
     }
     if (m_render_data.size() != 1) { return; }
@@ -955,9 +1114,6 @@ void GLModel::render_geometry_instance(unsigned int instance_mats_vbo, unsigned 
     if (render_data.vbo_id == 0 || render_data.ibo_id == 0) {
         if (render_data.geometry.vertices_count() > 0 && render_data.geometry.indices_count() > 0 && !send_to_gpu(render_data.geometry))
             return;
-    }
-    if (instance_mats_vbo == 0) {
-        return;
     }
     const Geometry &data = render_data.geometry;
 
@@ -1003,22 +1159,27 @@ void GLModel::render_geometry_instance(unsigned int instance_mats_vbo, unsigned 
     //glBindAttribLocation(shader->get_id(), 2, "instanceMatrix");
     //glBindAttribLocation(2, "instanceMatrix");
     //shader->bind(shaderProgram, 0, 'position');
-    const int i_loc0 = shader->get_attrib_location("i_data0");
-    const int i_loc1 = shader->get_attrib_location("i_data1");
-    const int i_loc2 = shader->get_attrib_location("i_data2");
-    const int i_loc3 = shader->get_attrib_location("i_data3");
+    bool has_instancing_attributes = false;
+    int i_loc0 = -1;
+    int i_loc1 = -1;
+    int i_loc2 = -1;
+    int i_loc3 = -1;
+    if (instance_mats_vbo > 0) {
+        i_loc0 = shader->get_attrib_location("i_data0");
+        i_loc1 = shader->get_attrib_location("i_data1");
+        i_loc2 = shader->get_attrib_location("i_data2");
+        i_loc3 = shader->get_attrib_location("i_data3");
 
-    const bool has_instancing_attributes = (i_loc0 != -1 && i_loc1 != -1 && i_loc2 != -1 && i_loc3 != -1);
-    if (has_instancing_attributes) {
-        bind_mats_vbo(instance_mats_vbo, instances_count, { i_loc0, i_loc1, i_loc2, i_loc3});
+        has_instancing_attributes = (i_loc0 != -1 && i_loc1 != -1 && i_loc2 != -1 && i_loc3 != -1);
+        if (has_instancing_attributes) {
+            bind_mats_vbo(instance_mats_vbo, instances_count, { i_loc0, i_loc1, i_loc2, i_loc3 });
+        }
     }
-    else {
-        return;
-    }
+
     auto res = shader->set_uniform("uniform_color", render_data.color);
 
     glsafe(::glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, render_data.ibo_id));
-    glsafe(::glDrawElementsInstanced(mode, range.second - range.first, index_type, (const void *) (range.first * Geometry::index_stride_bytes(data)), instances_count));
+    glsafe(::glDrawElementsInstanced(mode, range.second - range.first, index_type, (const void*)(range.first * Geometry::index_stride_bytes(data)), instances_count));
     glsafe(::glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0));
 
     if (has_instancing_attributes && instance_mats_vbo > 0) {
@@ -1031,6 +1192,7 @@ void GLModel::render_geometry_instance(unsigned int instance_mats_vbo, unsigned 
         glsafe(::glDisableVertexAttribArray(i_loc2));
         glsafe(::glDisableVertexAttribArray(i_loc3));
     }
+
     if (tex_coord_id != -1) glsafe(::glDisableVertexAttribArray(tex_coord_id));
     if (normal_id != -1) glsafe(::glDisableVertexAttribArray(normal_id));
     if (position_id != -1) glsafe(::glDisableVertexAttribArray(position_id));

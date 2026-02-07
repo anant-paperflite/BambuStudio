@@ -5,6 +5,12 @@
 
 #include <map>
 
+#define WXCOLOUR_GREY700 wxColour(107, 107, 107)
+#define WXCOLOUR_GREY500 wxColour(158, 158, 158)
+#define WXCOLOUR_GREY400 wxColour("#CECECE")
+#define WXCOLOUR_GREY300 wxColour(238, 238, 238)
+#define WXCOLOUR_GREY200 wxColour(248, 248, 248)
+
 class StateColor
 {
 public:
@@ -29,6 +35,9 @@ public:
     static wxColour darkModeColorFor(wxColour const &color);
     static wxColour lightModeColorFor(wxColour const &color);
 
+    // Button style
+    static StateColor createButtonStyleGray();
+
 public:
     template<typename ...Colors>
     StateColor(std::pair<Colors, int>... colors) {
@@ -43,6 +52,16 @@ public:
 
     // single color
     StateColor(unsigned long color);
+
+    // operator==
+    bool operator==(StateColor const& other) const{
+        return statesList_ == other.statesList_ && colors_ == other.colors_ && takeFocusedAsHovered_ == other.takeFocusedAsHovered_;
+    };
+
+    // operator!=
+    bool operator!=(StateColor const& other) const{
+        return !(*this == other);
+    };
 
 public:
     void append(wxColour const & color, int states);

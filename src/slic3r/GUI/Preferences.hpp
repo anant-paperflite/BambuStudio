@@ -104,11 +104,6 @@ public:
     RadioSelectorList m_radio_group;
     // ComboBoxSelectorList    m_comxbo_group;
 
-    ::TextInput* helio_input_pat = { nullptr };
-    wxStaticBitmap* helio_pat_refresh = { nullptr };
-    wxPanel* helio_pat_panel = { nullptr };
-    wxPanel* helio_fun_panel = { nullptr };
-
     wxBoxSizer *create_item_title(wxString title, wxWindow *parent, wxString tooltip);
     wxBoxSizer *create_item_combobox(wxString title, wxWindow *parent, wxString tooltip, std::string param,const std::vector<wxString>& label_list, const std::vector<std::string>& value_list, std::function<void(int)> callback = nullptr, int title_width = 0, int combox_width = 0);
     wxBoxSizer *create_item_region_combobox(wxString title, wxWindow *parent, wxString tooltip, std::vector<wxString> vlist);
@@ -122,6 +117,16 @@ public:
     wxBoxSizer *create_item_input(wxString title, wxString title2, wxWindow *parent, wxString tooltip, std::string param, std::function<void(wxString)> onchange = {});
     wxBoxSizer *create_item_range_input(
         wxString title, wxWindow *parent, wxString tooltip, std::string param, float range_min, float range_max, int keep_digital,std::function<void(wxString)> onchange = {});
+    wxBoxSizer *create_item_range_two_input(wxString                      title,
+                                            wxWindow *                    parent,
+                                            wxString                      tooltip,
+                                            std::string                   param,
+                                            std::string                   param1,
+                                            float                         range_min,
+                                            float                         range_max,
+                                            int                           keep_digital,
+                                            std::function<void(wxString)> onchange = {},
+                                            std::function<void(wxString)> onchange1 = {});
     wxBoxSizer *create_item_backup_input(wxString title, wxWindow *parent, wxString tooltip, std::string param);
     wxBoxSizer *create_item_multiple_combobox(
         wxString title, wxWindow *parent, wxString tooltip, int padding_left, std::string parama, std::vector<wxString> vlista, std::vector<wxString> vlistb);

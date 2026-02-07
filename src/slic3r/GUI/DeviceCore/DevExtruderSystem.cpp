@@ -48,17 +48,22 @@ namespace Slic3r
 
     NozzleType DevExtder::GetNozzleType() const
     {
-        return system->Owner()->GetNozzleSystem()->GetNozzle(m_current_nozzle_id).m_nozzle_type;
+        return system->Owner()->GetNozzleSystem()->GetExtNozzle(m_current_nozzle_id).m_nozzle_type;
     }
 
     NozzleFlowType DevExtder::GetNozzleFlowType() const
     {
-        return system->Owner()->GetNozzleSystem()->GetNozzle(m_current_nozzle_id).m_nozzle_flow;
+        return system->Owner()->GetNozzleSystem()->GetExtNozzle(m_current_nozzle_id).m_nozzle_flow;
     }
 
     float DevExtder::GetNozzleDiameter() const
     {
-        return system->Owner()->GetNozzleSystem()->GetNozzle(m_current_nozzle_id).m_diameter;
+        return system->Owner()->GetNozzleSystem()->GetExtNozzle(m_current_nozzle_id).m_diameter;
+    }
+
+    NozzleDiameterType DevExtder::GetNozzleDiameterType() const
+    {
+        return system->Owner()->GetNozzleSystem()->GetExtNozzle(m_current_nozzle_id).GetNozzleDiameterType();
     }
 
     DevExtderSystem::DevExtderSystem(MachineObject* obj)
@@ -96,9 +101,12 @@ namespace Slic3r
 
     std::optional<DevExtder> DevExtderSystem::GetExtderById(int extder_id) const
     {
-        if (extder_id >= m_extders.size())
-        {
-            assert(false && "Invalid extruder ID");
+        if (extder_id == 0xF) {
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " the extruder maybe changing: " << extder_id;
+            return std::nullopt;
+        }
+
+        if (extder_id >= m_extders.size()) {
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << "No extruder found for " << extder_id;
             return std::nullopt;
         }
@@ -166,8 +174,11 @@ namespace Slic3r
             if (!tray_tar.empty())
             {
                 int tray_tar_int = atoi(tray_tar.c_str());
-                if (tray_tar_int == VIRTUAL_TRAY_MAIN_ID || tray_tar_int == VIRTUAL_TRAY_DEPUTY_ID)
-                {
+                if (tray_tar_int == VIRTUAL_TRAY_MAIN_ID) /*255 means unloading*/ {
+                    system->m_extders[MAIN_EXTRUDER_ID].m_star.ams_id = "";
+                    system->m_extders[MAIN_EXTRUDER_ID].m_star.slot_id = std::to_string(VIRTUAL_TRAY_MAIN_ID);
+                }
+                else if (tray_tar_int == VIRTUAL_TRAY_DEPUTY_ID) /*254 means loading ext spool*/ {
                     system->m_extders[MAIN_EXTRUDER_ID].m_star.ams_id = std::to_string(VIRTUAL_TRAY_MAIN_ID);
                     system->m_extders[MAIN_EXTRUDER_ID].m_star.slot_id = "0";
                 }

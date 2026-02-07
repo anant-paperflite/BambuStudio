@@ -1841,6 +1841,19 @@ void NotificationManager::close_plater_warning_notification(const std::string& t
 	}
 }
 
+void NotificationManager::push_flushing_volume_error_notification(NotificationType type, NotificationLevel level, const std::string &text, const std::string &hypertext, std::function<bool(wxEvtHandler *)> callback)
+{
+    set_all_slicing_errors_gray(false);
+    std::string prefix_msg = level == NotificationLevel::WarningNotificationLevel ? _u8L("Warning:") : _u8L("Error:");
+    push_notification_data({type, level, 0, prefix_msg + "\n" + text, hypertext, callback}, 0);
+}
+
+void NotificationManager::close_flushing_volume_error_notification(NotificationType type, NotificationLevel level)
+{
+    for (std::unique_ptr<PopNotification> &notification : m_pop_notifications) {
+        if (notification->get_type() == type && notification->get_data().level == level) { notification->close(); }
+    }
+}
 
 void NotificationManager::set_all_slicing_errors_gray(bool g)
 {
@@ -2130,13 +2143,13 @@ void NotificationManager::set_slicing_progress_began(bool is_helio)
 	// Slicing progress notification was not found - init it thru plater so correct cancel callback function is appended
 	wxGetApp().plater()->init_notification_manager();
 }
-void NotificationManager::set_slicing_progress_percentage(const std::string& text, float percentage)
+void NotificationManager::set_slicing_progress_percentage(const std::string& text, float percentage, bool is_helio)
 {
 	for (std::unique_ptr<PopNotification>& notification : m_pop_notifications) {
 		if (notification->get_type() == NotificationType::SlicingProgress) {
 			SlicingProgressNotification* spn = dynamic_cast<SlicingProgressNotification*>(notification.get());
 			if(spn->set_progress_state(percentage)) {
-				spn->set_status_text(text);
+				spn->set_status_text(text, is_helio);
 				wxGetApp().plater()->get_current_canvas3D()->schedule_extra_frame(0);
 			}
 			return;

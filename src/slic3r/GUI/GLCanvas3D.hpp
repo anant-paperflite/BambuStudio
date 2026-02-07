@@ -15,7 +15,6 @@
 #include "GLSelectionRectangle.hpp"
 #include "MeshUtils.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
-#include "GCodeViewer.hpp"
 #include "Camera.hpp"
 #include "IMToolbar.hpp"
 #include "slic3r/GUI/3DBed.hpp"
@@ -57,6 +56,9 @@ namespace CustomGCode { struct Item; }
 
 namespace GUI {
 
+namespace gcode {
+    class GCodeViewer;
+};
 class PartPlateList;
 class OpenGLManager;
 class GLToolbar;
@@ -145,6 +147,7 @@ private:
 
 wxDECLARE_EVENT(EVT_GLCANVAS_OBJECT_SELECT, SimpleEvent);
 wxDECLARE_EVENT(EVT_GLCANVAS_PLATE_NAME_CHANGE, SimpleEvent);
+wxDECLARE_EVENT(EVT_GLCANVAS_MOVE_PLATE, SimpleEvent);
 //BBS: declare EVT_GLCANVAS_PLATE_SELECT
 wxDECLARE_EVENT(EVT_GLCANVAS_PLATE_SELECT, SimpleEvent);
 
@@ -408,10 +411,14 @@ class GLCanvas3D
         MultiExtruderHeightOutside,       // after slice
         FilamentUnPrintableOnFirstLayer,
         MixUsePLAAndPETG,
+        MultiFilaNoWipeTower,
         PrimeTowerOutside,
         NozzleFilamentIncompatible,
         MixtureFilamentIncompatible,
-        AsemblyInvalid // for asembly view only
+        AsemblyInvalid, // for asembly view only
+        FlushingVolumeZero,
+        FilamentNozzleFlowIncompatible,
+        TpuNozzleMultipleFilaments
     };
 
     class RenderStats
@@ -569,6 +576,8 @@ public:
     int GetHoverId();
     void set_ignore_left_up() { m_mouse.ignore_left_up = true; }
     GLVolumeCollection &get_paint_outline_volumes() { return m_paint_outline_volumes; }
+    Vec2i               convert_world_pt_to_screen(Vec3d pos);
+    bool                is_mouse_in_screen_convex_hull(Vec2i mouse,const BoundingBoxf3& box);
 
 private:
     bool m_is_dark = false;
@@ -584,6 +593,7 @@ private:
     bool m_in_render;
     wxTimer m_timer;
     wxTimer m_timer_set_color;
+    int m_color_input_value = -1;
     LayersEditing m_layers_editing;
     Mouse m_mouse;
     GLGizmosManager m_gizmos;
@@ -609,7 +619,7 @@ private:
 
     GLVolumeCollection m_paint_outline_volumes;
     GLVolumeCollection m_volumes;
-    GCodeViewer m_gcode_viewer;
+    mutable std::shared_ptr<gcode::GCodeViewer> m_p_gcode_viewer{ nullptr };
 
     RenderTimer m_render_timer;
 
@@ -807,6 +817,7 @@ public:
     void set_as_dirty();
     void requires_check_outside_state() { m_requires_check_outside_state = true; }
 
+    bool is_in_same_model_object(const std::vector<int> volume_ids);
     unsigned int get_volumes_count() const;
     const GLVolumeCollection& get_volumes() const { return m_volumes; }
     void reset_volumes(bool set_notice = true);
@@ -816,11 +827,10 @@ public:
     const float get_scale() const;
 
     //BBS
-    GCodeViewer& get_gcode_viewer() { return m_gcode_viewer; }
-    void init_gcode_viewer(ConfigOptionMode mode, Slic3r::PresetBundle* preset_bundle) { m_gcode_viewer.init(mode, preset_bundle); }
-    void reset_gcode_toolpaths() { m_gcode_viewer.reset(); }
-    const GCodeViewer::SequentialView& get_gcode_sequential_view() const { return m_gcode_viewer.get_sequential_view(); }
-    void update_gcode_sequential_view_current(unsigned int first, unsigned int last) { m_gcode_viewer.update_sequential_view_current(first, last); }
+    gcode::GCodeViewer& get_gcode_viewer() const;
+    void init_gcode_viewer(ConfigOptionMode mode, Slic3r::PresetBundle* preset_bundle);
+    void reset_gcode_toolpaths();
+    void update_gcode_sequential_view_current(unsigned int first, unsigned int last);
 
     void toggle_selected_volume_visibility(bool selected_visible);
     void toggle_sla_auxiliaries_visibility(bool visible, const ModelObject* mo = nullptr, int instance_idx = -1);
@@ -861,6 +871,13 @@ public:
     void                                set_use_color_clip_plane(bool use) { m_volumes.set_use_color_clip_plane(use); }
     void                                set_color_clip_plane(const Vec3d &cp_normal, double offset) { m_volumes.set_color_clip_plane(cp_normal, offset); }
     void                                set_color_clip_plane_colors(const std::array<ColorRGBA, 2> &colors) { m_volumes.set_color_clip_plane_colors(colors); }
+
+    // Volume color override methods (for mesh boolean gizmo)
+    void set_use_volume_color_override(bool use) { m_volumes.set_use_volume_color_override(use); }
+    void set_volume_color_override(unsigned int volume_idx, const std::array<float, 4>& color) { m_volumes.set_volume_color_override(volume_idx, color); }
+    void set_volumes_color_override(const std::vector<unsigned int>& volume_indices, const std::array<float, 4>& color) { m_volumes.set_volumes_color_override(volume_indices, color); }
+    void clear_volume_color_override(unsigned int volume_idx) { m_volumes.clear_volume_color_override(volume_idx); }
+    void clear_all_volume_color_overrides() { m_volumes.clear_all_volume_color_overrides(); }
 
     void set_color_by(const std::string& value);
 
@@ -932,7 +949,10 @@ public:
     {
         m_enable_render = enabled;
     }
-
+    enum class ThumbnailRenderRype {
+        GLVolumes,
+        CustomMeshOrVertexColors,
+    };
     // printable_only == false -> render also non printable volumes as grayed
     // parts_only == false -> render also sla support and pad
     void render_thumbnail(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params,
@@ -940,6 +960,7 @@ public:
                                  Camera::ViewAngleType   camera_view_angle_type = Camera::ViewAngleType::Iso,
                                  bool                    for_picking  = false,
                                  bool                    ban_light    = false);
+
     void render_thumbnail(ThumbnailData &           thumbnail_data,
                                  std::vector<std::array<float, 4>> &extruder_colors,
                                  unsigned int              w,
@@ -950,7 +971,8 @@ public:
                                  Camera::EType             camera_type,
                                  Camera::ViewAngleType     camera_view_angle_type = Camera::ViewAngleType::Iso,
                                  bool                      for_picking  = false,
-                                 bool                      ban_light    = false);
+                                 bool                      ban_light    = false,
+                                 ThumbnailRenderRype       render_type = ThumbnailRenderRype::GLVolumes);
 
     // render thumbnail using an off-screen framebuffer
     static void render_thumbnail_framebuffer(const std::shared_ptr<OpenGLManager>& p_ogl_manager, ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params,
@@ -959,7 +981,8 @@ public:
                                              Camera::EType                      camera_type,
                                              Camera::ViewAngleType              camera_view_angle_type = Camera::ViewAngleType::Iso,
                                              bool                               for_picking  = false,
-                                             bool                               ban_light    = false);
+                                             bool                                    ban_light              = false,
+                                             ThumbnailRenderRype                     render_type            = ThumbnailRenderRype::GLVolumes);
 
     //BBS use gcoder viewer render calibration thumbnails
     void render_calibration_thumbnail(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params);
@@ -976,16 +999,20 @@ public:
     void delete_selected();
     void ensure_on_bed(unsigned int object_idx, bool allow_negative_z);
 
-    bool is_gcode_legend_enabled() const { return m_gcode_viewer.is_legend_enabled(); }
-    GCodeViewer::EViewType get_gcode_view_type() const { return m_gcode_viewer.get_view_type(); }
-    const std::vector<double>& get_gcode_layers_zs() const;
+    int get_gcode_layers_count() const;
+    bool is_gcode_legend_enabled() const;
+    std::vector<double> get_gcode_layers_zs() const;
     std::vector<double> get_volumes_print_zs(bool active_only) const;
-    unsigned int get_gcode_options_visibility_flags() const { return m_gcode_viewer.get_options_visibility_flags(); }
+
     void set_gcode_options_visibility_from_flags(unsigned int flags);
-    unsigned int get_toolpath_role_visibility_flags() const { return m_gcode_viewer.get_toolpath_role_visibility_flags(); }
+    unsigned int get_gcode_options_visibility_flags() const;
+
+    unsigned int get_toolpath_role_visibility_flags() const;
+
     void set_volumes_z_range(const std::array<double, 2>& range);
-    std::vector<CustomGCode::Item>& get_custom_gcode_per_print_z() { return m_gcode_viewer.get_custom_gcode_per_print_z(); }
-    size_t get_gcode_extruders_count() { return m_gcode_viewer.get_extruders_count(); }
+    std::vector<CustomGCode::Item>& get_custom_gcode_per_print_z() const;
+
+    size_t get_gcode_extruders_count()const;
 
     std::vector<int> load_object(const ModelObject& model_object, int obj_idx, std::vector<int> instance_idxs, bool lod_enabled);
     std::vector<int> load_object(const Model& model, int obj_idx, bool lod_enabled);
@@ -995,14 +1022,12 @@ public:
     void reload_scene(bool refresh_immediately, bool force_full_scene_refresh = false);
     //BBS: always load shell at preview
     void load_shells(const Print& print, bool force_previewing = false);
-    void reset_shells() { m_gcode_viewer.reset_shell(); }
-    void set_shells_on_previewing(bool is_preview) { m_gcode_viewer.set_shells_on_preview(is_preview); }
+    void reset_shells();
+    void set_shells_on_previewing(bool is_preview);
 
     //BBS: add only gcode mode
     void load_gcode_preview(const GCodeProcessorResult& gcode_result, const std::vector<std::string>& str_tool_colors, bool only_gcode);
     void refresh_gcode_preview_render_paths();
-    void set_gcode_view_preview_type(GCodeViewer::EViewType type) { return m_gcode_viewer.set_view_type(type); }
-    GCodeViewer::EViewType get_gcode_view_preview_type() const { return m_gcode_viewer.get_view_type(); }
     void load_sla_preview();
     //void load_preview(const std::vector<std::string>& str_tool_colors, const std::vector<CustomGCode::Item>& color_print_values);
     void bind_event_handlers();
@@ -1036,7 +1061,7 @@ public:
     void set_tooltip(const std::string& tooltip);
 
     // the following methods add a snapshot to the undo/redo stack, unless the given string is empty
-    void do_move(const std::string& snapshot_type);
+    void do_move(const std::string& snapshot_type,bool force_volume_move =false);
     void do_rotate(const std::string& snapshot_type);
     void do_scale(const std::string& snapshot_type);
     void do_flatten(const Vec3d& normal, const std::string& snapshot_type);
@@ -1279,6 +1304,7 @@ private:
     // generates a warning notification containing the given message
     void _set_warning_notification(EWarning warning, bool state);
 
+    bool is_flushing_matrix_error();
     bool _is_any_volume_outside() const;
 
     // updates the selection from the content of m_hover_volume_idxs
@@ -1326,7 +1352,19 @@ private:
         Camera::EType                      camera_type,
         Camera::ViewAngleType              camera_view_angle_type = Camera::ViewAngleType::Iso,
         bool                               for_picking = false,
-        bool                               ban_light = false);
+        bool                               ban_light              = false);
+    static void _render_custom_thumbnail_internal(ThumbnailData &                         thumbnail_data,
+                                           const ThumbnailsParams &                thumbnail_params,
+                                           PartPlateList &                         partplate_list,
+                                           ModelObjectPtrs &                       model_objects,
+                                           const GLVolumeCollection &              volumes,
+                                           std::vector<std::array<float, 4>> &     extruder_colors,
+                                           const std::shared_ptr<GLShaderProgram> &shader,
+                                           Camera::EType                           camera_type,
+                                           Camera::ViewAngleType                   camera_view_angle_type = Camera::ViewAngleType::Iso,
+                                           bool                                    for_picking            = false,
+                                           bool                                    ban_light              = false,
+                                           ThumbnailRenderRype                     render_type            = ThumbnailRenderRype::CustomMeshOrVertexColors);
 };
 
 const ModelVolume *get_model_volume(const GLVolume &v, const Model &model);

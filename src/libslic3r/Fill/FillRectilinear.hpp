@@ -175,10 +175,26 @@ public:
     void fill_surface_locked_zag(const Surface *                          surface,
                                   const FillParams &                       params,
                                   std::vector<std::pair<Polylines, Flow>> &multi_width_polyline);
+    void      get_skin_and_skeleton_area(ExPolygons &skin, ExPolygons &skeleton, const Surface &surface);
+    Polylines generate_skeleton_pattern(FillParams params, Surface surface, const ExPolygons &skeleton);
+    Polylines generate_skin_pattern(FillParams params, Surface surface, const ExPolygons &skin);
+
     void set_skin_and_skeleton_pattern(const InfillPattern &skin_pattern, const InfillPattern &skeleton_pattern){
         this->skin_pattern = skin_pattern;
         this->skeleton_pattern = skeleton_pattern;
     };
+};
+
+class Fill2DLattice : public FillRectilinear
+{
+public:
+    Fill *clone() const override { return new Fill2DLattice(*this); }
+    ~Fill2DLattice() override = default;
+    Polylines fill_surface(const Surface *surface, const FillParams &params) override;
+
+protected:
+    // The grid fill will keep the angle constant between the layers, see the implementation of Slic3r::Fill.
+    float _layer_angle(size_t idx) const override { return 0.f; }
 };
 
 Points sample_grid_pattern(const ExPolygon &expolygon, coord_t spacing, const BoundingBox &global_bounding_box);

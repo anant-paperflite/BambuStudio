@@ -1,6 +1,15 @@
 #include <nlohmann/json.hpp>
+#include "DevInfo.h"
 #include "DevManager.h"
 #include "DevUtil.h"
+
+/* mac need the macro while including <boost/stacktrace.hpp>*/
+#ifdef  __APPLE__
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#endif
+#include <boost/stacktrace.hpp>
 
 // TODO: remove this include
 #include "slic3r/GUI/DeviceManager.hpp"
@@ -141,7 +150,7 @@ namespace Slic3r
                 if (it->second->get_dev_ip() != dev_ip ||
                     it->second->bind_state != bind_state ||
                     it->second->bind_sec_link != sec_link ||
-                    it->second->dev_connection_type != connect_type ||
+                    it->second->connection_type() != connect_type ||
                     it->second->bind_ssdp_version != ssdp_version)
                 {
                     if (it->second->bind_state != bind_state) {
@@ -151,7 +160,7 @@ namespace Slic3r
                     it->second->set_dev_ip(dev_ip);
                     it->second->bind_state          = bind_state;
                     it->second->bind_sec_link       = sec_link;
-                    it->second->dev_connection_type = connect_type;
+                    it->second->GetInfo()->SetConnectionType(connect_type);
                     it->second->bind_ssdp_version   = ssdp_version;
                     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " UpdateUserMachineInfo"
                         << ", dev_id= " << BBLCrossTalk::Crosstalk_DevId(dev_id)
@@ -187,13 +196,13 @@ namespace Slic3r
                 }
 
                 if (obj->wifi_signal != printer_signal ||
-                    obj->dev_connection_type != connect_type ||
+                    obj->connection_type() != connect_type ||
                     obj->bind_state != bind_state ||
                     obj->bind_sec_link != sec_link ||
                     obj->bind_ssdp_version != ssdp_version ||
                     obj->printer_type != _parse_printer_type(printer_type_str))
                 {
-                    if (obj->dev_connection_type != connect_type ||
+                    if (obj->connection_type() != connect_type ||
                         obj->bind_state != bind_state ||
                         obj->bind_sec_link != sec_link ||
                         obj->bind_ssdp_version != ssdp_version ||
@@ -217,7 +226,7 @@ namespace Slic3r
                     }
 
                     obj->wifi_signal         = printer_signal;
-                    obj->dev_connection_type = connect_type;
+                    it->second->GetInfo()->SetConnectionType(connect_type);
                     obj->bind_state          = bind_state;
                     obj->bind_sec_link       = sec_link;
                     obj->bind_ssdp_version   = ssdp_version;
@@ -225,12 +234,11 @@ namespace Slic3r
                 }
 
                 // U0 firmware
-                if (obj->dev_connection_type.empty() && obj->bind_state.empty())
+                if (obj->connection_type().empty() && obj->bind_state.empty())
                     obj->bind_state = "free";
 
-                obj->last_alive = Slic3r::Utils::get_current_time_utc();
                 obj->m_is_online = true;
-
+                obj->set_dev_name(dev_name);
                 /* if (!obj->dev_ip.empty()) {
                 Slic3r::GUI::wxGetApp().app_config->set_str("ip_address", obj->dev_id, obj->dev_ip);
                 Slic3r::GUI::wxGetApp().app_config->save();
@@ -241,7 +249,7 @@ namespace Slic3r
                 obj = new MachineObject(this, m_agent, dev_name, dev_id, dev_ip);
                 obj->printer_type = _parse_printer_type(printer_type_str);
                 obj->wifi_signal = printer_signal;
-                obj->dev_connection_type = connect_type;
+                obj->GetInfo()->SetConnectionType(connect_type);
                 obj->bind_state     = bind_state;
                 obj->bind_sec_link  = sec_link;
                 obj->dev_connection_name = connection_name;
@@ -264,6 +272,11 @@ namespace Slic3r
                     << ", ip = " << BBLCrossTalk::Crosstalk_DevIP(dev_ip) <<", printer_name = " << BBLCrossTalk::Crosstalk_DevName(dev_name)
                     << ", con_type= " << connect_type <<", signal= " << printer_signal << ", bind_state= " << bind_state;
             }
+
+            if (obj && obj->is_cloud_mode_printer()) {
+                obj->erase_user_access_code();
+                obj->erase_user_access_dev_ip();
+            }
         }
         catch (...) {
             ;
@@ -280,7 +293,13 @@ namespace Slic3r
             obj->printer_type = _parse_printer_type("C11");
         else
             obj->printer_type = _parse_printer_type(printer_type);
-        obj->dev_connection_type = connection_type == "farm" ? "lan":connection_type;
+
+        if (connection_type == "farm") {
+            obj->GetInfo()->SetConnectionType("lan");
+        } else {
+            obj->GetInfo()->SetConnectionType(connection_type);
+        }
+
         obj->bind_state          = connection_type == "farm" ? "free":bind_state;
         obj->bind_sec_link = "secure";
         obj->bind_ssdp_version = version;
@@ -385,6 +404,8 @@ namespace Slic3r
         selected_machine = "";
         local_selected_machine = "";
 
+        OnSelectedMachineChanged(selected_machine, "");
+
         // clean user list
         for (auto it = userMachineList.begin(); it != userMachineList.end(); it++)
         {
@@ -400,17 +421,35 @@ namespace Slic3r
 
     bool DeviceManager::set_selected_machine(std::string dev_id)
     {
-        BOOST_LOG_TRIVIAL(info) << "set_selected_machine=" << BBLCrossTalk::Crosstalk_DevId(dev_id);
+        BOOST_LOG_TRIVIAL(info) << "set_selected_machine=" << BBLCrossTalk::Crosstalk_DevId(dev_id)
+            << " cur_selected=" << BBLCrossTalk::Crosstalk_DevId(selected_machine);
         auto my_machine_list = get_my_machine_list();
         auto it = my_machine_list.find(dev_id);
 
-        // disconnect last
+        // Check the dev_id is in my_machine_list
+        if (!dev_id.empty() && it == my_machine_list.end()) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": "
+                << BBLCrossTalk::Crosstalk_DevId(dev_id) << " not in my_machine_list";
+
+            static std::unordered_set<std::string> s_unknown_devs;
+            if (s_unknown_devs.find(dev_id) == s_unknown_devs.end()) {
+                s_unknown_devs.insert(dev_id);
+                BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::stacktrace::stacktrace();
+            };
+
+            return false;
+        };
+
+        // disconnect last if dev_id difference from previous one
         auto last_selected = my_machine_list.find(selected_machine);
-        if (last_selected != my_machine_list.end())
+        if (last_selected != my_machine_list.end() && selected_machine != dev_id)
         {
             if (last_selected->second->connection_type() == "lan")
             {
                 m_agent->disconnect_printer();
+            }
+            else if (last_selected->second->connection_type() == "cloud") {
+                m_agent->set_user_selected_machine("");
             }
         }
 
@@ -419,8 +458,12 @@ namespace Slic3r
         {
             if (selected_machine == dev_id)
             {
+                // same dev_id, cloud => reset update time
                 if (it->second->connection_type() != "lan")
                 {
+                    BOOST_LOG_TRIVIAL(info) << "set_selected_machine: same cloud machine, dev_id =" << BBLCrossTalk::Crosstalk_DevId(dev_id)
+                        << ", just reset update time";
+
                     // only reset update time
                     it->second->reset_update_time();
 
@@ -429,8 +472,12 @@ namespace Slic3r
 
                     return true;
                 }
+                // same dev_id, lan => disconnect and reconnect
                 else
                 {
+                    BOOST_LOG_TRIVIAL(info) << "set_selected_machine: same lan machine, dev_id =" << BBLCrossTalk::Crosstalk_DevId(dev_id)
+                        << ", disconnect and reconnect";
+
                     // lan mode printer reconnect printer
                     if (m_agent)
                     {
@@ -442,7 +489,6 @@ namespace Slic3r
 #else
                         it->second->connect(it->second->local_use_ssl_for_mqtt);
 #endif
-                        it->second->set_lan_mode_connection_state(true);
                     }
                 }
             }
@@ -452,27 +498,19 @@ namespace Slic3r
                 {
                     if (it->second->connection_type() != "lan" || it->second->connection_type().empty())
                     {
-                        if (m_agent->get_user_selected_machine() == dev_id)
-                        {
-                            it->second->reset_update_time();
-                        }
-                        else
-                        {
-                            BOOST_LOG_TRIVIAL(info) << "static: set_selected_machine: same dev_id = " << BBLCrossTalk::Crosstalk_DevId(dev_id);
-                            m_agent->set_user_selected_machine(dev_id);
-                            it->second->reset();
-                        }
+                        BOOST_LOG_TRIVIAL(info) << "set_selected_machine: select new cloud machine, dev_id =" << BBLCrossTalk::Crosstalk_DevId(dev_id);
+                        m_agent->set_user_selected_machine(dev_id);
+                        it->second->reset();
                     }
                     else
                     {
-                        BOOST_LOG_TRIVIAL(info) << "static: set_selected_machine: same dev_id = empty";
+                        BOOST_LOG_TRIVIAL(info) << "set_selected_machine: select new lan machine, dev_id =" << BBLCrossTalk::Crosstalk_DevId(dev_id);
                         it->second->reset();
 #if !BBL_RELEASE_TO_PUBLIC
                         it->second->connect(Slic3r::GUI::wxGetApp().app_config->get("enable_ssl_for_mqtt") == "true" ? true : false);
 #else
                         it->second->connect(it->second->local_use_ssl_for_mqtt);
 #endif
-                        it->second->set_lan_mode_connection_state(true);
                     }
                 }
             }
@@ -481,7 +519,13 @@ namespace Slic3r
                 data.second.checked_filament.clear();
             }
         }
+
+        if (selected_machine != dev_id) {
+            OnSelectedMachineChanged(selected_machine, dev_id);
+        }
+
         selected_machine = dev_id;
+        record_user_last_machine(selected_machine);
         return true;
     }
 
@@ -655,11 +699,11 @@ namespace Slic3r
                     {
                         /* update field */
                         obj = iter->second;
-                        obj->set_dev_id(dev_id);
+                        obj->GetInfo()->SetDevId(dev_id);
                     }
                     else
                     {
-                        obj = new MachineObject(this, m_agent, "", "", "");
+                        obj = new MachineObject(this, m_agent, "", dev_id, "");
                         if (m_agent)
                         {
                             obj->set_bind_status(m_agent->get_user_name());
@@ -675,7 +719,7 @@ namespace Slic3r
                     if (!obj) continue;
 
                     if (!elem["dev_id"].is_null())
-                        obj->set_dev_id(elem["dev_id"].get<std::string>());
+                        obj->GetInfo()->SetDevId(elem["dev_id"].get<std::string>());
                     if (!elem["dev_name"].is_null())
                         obj->set_dev_name(elem["dev_name"].get<std::string>());
                     if (!elem["dev_online"].is_null())
@@ -697,8 +741,6 @@ namespace Slic3r
                     }
                     if (!elem["task_status"].is_null())
                         obj->iot_print_status = elem["task_status"].get<std::string>();
-                    if (elem.contains("dev_product_name") && !elem["dev_product_name"].is_null())
-                        obj->dev_product_name = elem["dev_product_name"].get<std::string>();
                     if (elem.contains("dev_access_code") && !elem["dev_access_code"].is_null())
                     {
                         std::string acc_code = elem["dev_access_code"].get<std::string>();
@@ -736,36 +778,45 @@ namespace Slic3r
         unsigned int http_code;
         std::string body;
         int result = m_agent->get_user_print_info(&http_code, &body);
-        if (result == 0)
-        {
-            parse_user_print_info(body);
+        if (result == 0) {
+            Slic3r::GUI::wxGetApp().CallAfter([this, body]() {
+                parse_user_print_info(body);
+            });
         }
+    }
+
+    void DeviceManager::record_user_last_machine(const std::string& dev_id)
+    {
+        if (GUI::wxGetApp().app_config) {
+            GUI::wxGetApp().app_config->set("user_last_selected_machine", dev_id);
+        }
+    }
+
+    std::string DeviceManager::get_user_last_machine() const
+    {
+        if (GUI::wxGetApp().app_config) {
+            const auto& user_last_machine = GUI::wxGetApp().app_config->get("user_last_selected_machine");
+            if (!user_last_machine.empty()) {
+                return  user_last_machine;
+            } else {
+                return m_agent->get_user_selected_machine();
+            }
+        }
+
+        return "";
     }
 
     void DeviceManager::load_last_machine()
     {
         if (userMachineList.empty()) return;
-
-        else if (userMachineList.size() == 1)
-        {
+        else if (userMachineList.size() == 1) {
             this->set_selected_machine(userMachineList.begin()->second->get_dev_id());
-        }
-        else
-        {
-            if (m_agent)
-            {
-                std::string last_monitor_machine = m_agent->get_user_selected_machine();
-                bool found = false;
-                for (auto it = userMachineList.begin(); it != userMachineList.end(); it++)
-                {
-                    if (last_monitor_machine == it->first)
-                    {
-                        this->set_selected_machine(last_monitor_machine);
-                        found = true;
-                    }
-                }
-                if (!found)
-                    this->set_selected_machine(userMachineList.begin()->second->get_dev_id());
+        } else {
+            const auto& last_monitor_machine = get_user_last_machine();
+            if (userMachineList.find(last_monitor_machine) != userMachineList.end()) {
+                set_selected_machine(last_monitor_machine);
+            } else {
+                this->set_selected_machine(userMachineList.begin()->second->get_dev_id());
             }
         }
     }
@@ -782,14 +833,22 @@ namespace Slic3r
     void DeviceManager::OnSelectedMachineLost()
     {
         GUI::wxGetApp().sidebar().update_sync_status(nullptr);
-        GUI::wxGetApp().sidebar().load_ams_list(string(), nullptr);
+        GUI::wxGetApp().sidebar().load_ams_list(nullptr);
+    }
+
+    void DeviceManager::OnSelectedMachineChanged(const std::string& /*pre_dev_id*/,
+                                                 const std::string& /*new_dev_id*/)
+    {
+        if (MachineObject* obj_ = get_selected_machine()) {
+            GUI::wxGetApp().sidebar().update_sync_status(obj_);
+            GUI::wxGetApp().sidebar().load_ams_list(obj_);
+        };
     }
 
     void DeviceManager::reload_printer_settings()
     {
         for (auto obj : this->userMachineList) { obj.second->reload_printer_settings(); };
     }
-
 
     DeviceManagerRefresher::DeviceManagerRefresher(DeviceManager* manger) : wxObject()
     {
@@ -821,7 +880,6 @@ namespace Slic3r
         if (obj && m_manager->get_my_machine(obj->get_dev_id()) == nullptr)
         {
             m_manager->set_selected_machine("");
-            agent->set_user_selected_machine("");
             return;
         }
 

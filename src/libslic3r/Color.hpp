@@ -8,7 +8,10 @@ namespace Slic3r {
 using RGB = std::array<float, 3>;
 using RGBA = std::array<float, 4>;
 const RGBA UNDEFINE_COLOR = {0,0,0,0};
-bool  color_is_equal(const RGBA a, const RGBA &b);
+bool color_is_equal(const RGBA a, const RGBA &b);
+// Convert color strings (e.g., "#FF0000FF") to RGBA
+RGBA convert_color_string_to_rgba(const std::string& color_str);
+
 class ColorRGB
 {
 	std::array<float, 3> m_data{1.0f, 1.0f, 1.0f};
@@ -64,8 +67,9 @@ public:
 	static const ColorRGB REDISH()      { return { 1.0f, 0.5f, 0.5f }; }
 	static const ColorRGB YELLOW()      { return { 1.0f, 1.0f, 0.0f }; }
 	static const ColorRGB WHITE()       { return { 1.0f, 1.0f, 1.0f }; }
-	static const ColorRGB ORCA()        { return {0.0f, 150.f / 255.0f, 136.0f / 255}; }
-	static const ColorRGB WARNING()     { return {241.0f / 255, 117.f / 255.0f, 78.0f / 255}; }
+	static const ColorRGB ORCA()        { return {0.0f, 150.0f / 255.0f, 136.0f / 255.0f}; }
+	static const ColorRGB WARNING()     { return {241.0f / 255.0f, 117.0f / 255.0f, 78.0f / 255.0f}; }
+	static const ColorRGB ERROR_COLOR() { return {208.0f / 255.0f, 27.0f / 255.0f, 27.0f / 255.0f}; }
 
 	static const ColorRGB X()           { return { 0.75f, 0.0f, 0.0f }; }
 	static const ColorRGB Y()           { return { 0.0f, 0.75f, 0.0f }; }

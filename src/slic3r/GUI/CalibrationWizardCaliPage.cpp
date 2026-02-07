@@ -84,15 +84,14 @@ void CalibrationCaliPage::on_subtask_pause_resume(wxCommandEvent& event)
 
 void CalibrationCaliPage::on_subtask_abort(wxCommandEvent& event)
 {
-    DeviceManager* dev = Slic3r::GUI::wxGetApp().getDeviceManager();
-    if (!dev) return;
-    MachineObject* obj = dev->get_selected_machine();
-    if (!obj) return;
-
     if (abort_dlg == nullptr) {
         abort_dlg = new SecondaryCheckDialog(this->GetParent(), wxID_ANY, _L("Cancel print"));
-        abort_dlg->Bind(EVT_SECONDARY_CHECK_CONFIRM, [this, obj](wxCommandEvent& e) {
-            if (obj) obj->command_task_abort();
+        abort_dlg->Bind(EVT_SECONDARY_CHECK_CONFIRM, [](wxCommandEvent& e) {
+                DeviceManager* dev = Slic3r::GUI::wxGetApp().getDeviceManager();
+                if (!dev) return;
+                MachineObject* obj = dev->get_selected_machine();
+
+                if (obj) obj->command_task_abort();
             });
     }
     abort_dlg->update_text(_L("Are you sure to stop printing?"));
@@ -111,22 +110,15 @@ void CalibrationCaliPage::set_cali_img()
         }
         else if (m_cali_method == CalibrationMethod::CALI_METHOD_AUTO || m_cali_method == CalibrationMethod::CALI_METHOD_NEW_AUTO) {
             if (curr_obj) {
+                std::string image_name = curr_obj->get_auto_pa_cali_thumbnail_img_str();
                 if (curr_obj->is_multi_extruders()) {
                     if (m_cur_extruder_id == 0) {
-                        m_picture_panel->set_bmp(ScalableBitmap(this, "fd_calibration_auto_multi_extruders_right", 400));
+                        image_name += "_right";
                     } else {
-                        assert(m_cur_extruder_id == 1);
-                        m_picture_panel->set_bmp(ScalableBitmap(this, "fd_calibration_auto_multi_extruders_left", 400));
+                        image_name += "_left";
                     }
                 }
-                else if (curr_obj->get_printer_arch() == PrinterArch::ARCH_I3) {
-                    m_picture_panel->set_bmp(ScalableBitmap(this, "fd_calibration_auto_i3", 400));
-                } else if (curr_obj->is_series_o()) {
-                    m_picture_panel->set_bmp(ScalableBitmap(this, "fd_calibration_auto_single_o", 400));
-                }
-                else {
-                    m_picture_panel->set_bmp(ScalableBitmap(this, "fd_calibration_auto", 400));
-                }
+                m_picture_panel->set_bmp(ScalableBitmap(this, image_name, 400));
             }
             else {
                 m_picture_panel->set_bmp(ScalableBitmap(this, "fd_calibration_auto", 400));
@@ -137,7 +129,7 @@ void CalibrationCaliPage::set_cali_img()
         if (m_cali_method == CalibrationMethod::CALI_METHOD_MANUAL) {
             if (m_page_type == CaliPageType::CALI_PAGE_CALI)
                 m_picture_panel->set_bmp(ScalableBitmap(this, "flow_rate_calibration_coarse", 400));
-            if (m_page_type == CaliPageType::CALI_PAGE_FINE_CALI)
+            else if (m_page_type == CaliPageType::CALI_PAGE_FINE_CALI)
                 m_picture_panel->set_bmp(ScalableBitmap(this, "flow_rate_calibration_fine", 400));
             else
                 m_picture_panel->set_bmp(ScalableBitmap(this, "flow_rate_calibration_coarse", 400));
@@ -179,13 +171,13 @@ void CalibrationCaliPage::update(MachineObject* obj)
                                         << ", printer_status = " << obj->print_status
                                         << ", is_connected = " << obj->is_connected()
                                         << ", m_is_between_start_and_running = " << m_is_between_start_and_running
-                                        << ", cali_finished = " << obj->cali_finished
-                                        << ", cali_version = " << obj->cali_version
-                                        << ", cache_flow_ratio = " << obj->cache_flow_ratio
+                                        << ", cali_finished = " << obj->GetCalib()->GetStashCalibFinished()
+                                        << ", cali_version = " << obj->GetCalib()->GetCalibVersion()
+                                        << ", cache_flow_ratio = " << obj->GetCalib()->GetStashFlowRatio()
                                         << ", sub_task_name = " << obj->subtask_name
                                         << ", gcode_file_name = " << obj->m_gcode_file
-                                        << ", get_pa_calib_result" << obj->get_pa_calib_result
-                                        << ", get_flow_calib_result" << obj->get_flow_calib_result;
+                                        << ", get_pa_calib_result" << obj->GetCalib()->IsPAResultReady()
+                                        << ", get_flow_calib_result" << obj->GetCalib()->IsFlowRateReady();
             }
         }
         else {
@@ -202,11 +194,9 @@ void CalibrationCaliPage::update(MachineObject* obj)
             set_cali_img();
         }
 
-        if (obj->print_error > 0) {
-            StatusPanel* status_panel = Slic3r::GUI::wxGetApp().mainframe->m_monitor->get_status_panel();
-            status_panel->obj = obj;
-            status_panel->update_error_message();
-        }
+        StatusPanel* status_panel = Slic3r::GUI::wxGetApp().mainframe->m_monitor->get_status_panel();
+        status_panel->obj = obj;
+        status_panel->update_error_message();
 
         if (obj->print_status == "RUNNING")
             m_is_between_start_and_running = false;
@@ -221,7 +211,7 @@ void CalibrationCaliPage::update(MachineObject* obj)
                 if (get_obj_calibration_mode(obj) == m_cali_mode) {
                     if (obj->is_printing_finished()) {
                         if (obj->print_status == "FINISH") {
-                            if (obj->get_pa_calib_result) {
+                            if (obj->GetCalib()->IsPAResultReady()) {
                                 enable_cali = true;
                             }
                             else {
@@ -254,7 +244,7 @@ void CalibrationCaliPage::update(MachineObject* obj)
                 if (get_obj_calibration_mode(obj) == m_cali_mode) {
                     if (obj->is_printing_finished()) {
                         if (obj->print_status == "FINISH") {
-                            if (obj->get_flow_calib_result) {
+                            if (obj->GetCalib()->IsFlowRateReady()) {
                                 enable_cali = true;
                             }
                             else {
@@ -274,14 +264,13 @@ void CalibrationCaliPage::update(MachineObject* obj)
             } else if (m_cali_method == CalibrationMethod::CALI_METHOD_MANUAL) {
                 if (get_obj_calibration_mode(obj) == m_cali_mode && obj->is_printing_finished()) {
                     // use selected diameter, add a counter to timeout, add a warning tips when get result failed
-                    CalibUtils::emit_get_flow_ratio_calib_results(get_selected_calibration_nozzle_dia(obj));
                     enable_cali = true;
                 }
                 else {
                     enable_cali = false;
                 }
             } else {
-                assert(false);
+                //assert(false);
             }
             m_action_panel->enable_button(CaliPageActionType::CALI_ACTION_CALI_NEXT, enable_cali);
         }
@@ -425,9 +414,8 @@ void CalibrationCaliPage::update_subtask(MachineObject* obj)
     else {
         reset_printing_values();
     }
-
-    this->Layout();
-    this->Fit();
+    m_printing_panel->Layout();
+    m_printing_panel->Fit();
 }
 
 void CalibrationCaliPage::update_basic_print_data(bool def, float weight, int prediction)
@@ -439,7 +427,7 @@ void CalibrationCaliPage::update_basic_print_data(bool def, float weight, int pr
         m_printing_panel->show_priting_use_info(true, str_prediction, str_weight);
     }
     else {
-        m_printing_panel->show_priting_use_info(false, "0m", "0g");
+        m_printing_panel->show_priting_use_info(false, _L("0min"), "0g");
     }
 }
 
@@ -456,8 +444,8 @@ void CalibrationCaliPage::reset_printing_values()
     m_printing_panel->update_left_time(NA_STR);
     m_printing_panel->update_layers_num(true, wxString::Format(_L("Layer: %s"), NA_STR));
     update_basic_print_data(false);
-    this->Layout();
-    this->Fit();
+    m_printing_panel->Layout();
+    m_printing_panel->Fit();
 }
 
 void CalibrationCaliPage::on_device_connected(MachineObject* obj)
@@ -524,8 +512,8 @@ void CalibrationCaliPage::msw_rescale()
 float CalibrationCaliPage::get_selected_calibration_nozzle_dia(MachineObject* obj)
 {
     // return selected if this is set
-    if (obj->cali_selected_nozzle_dia > 1e-3 && obj->cali_selected_nozzle_dia < 10.0f)
-        return obj->cali_selected_nozzle_dia;
+    if(obj->GetCalib()->GetSelectedNozzleDiameter() != NozzleDiameterType::NONE_DIAMETER_TYPE)
+        return DevNozzle::ToNozzleDiameterFloat(obj->GetCalib()->GetSelectedNozzleDiameter());
 
     // return default nozzle if nozzle diameter is set
     if (obj->GetExtderSystem()->GetNozzleDiameter(0) > 1e-3 && obj->GetExtderSystem()->GetNozzleDiameter(0) < 10.0f)

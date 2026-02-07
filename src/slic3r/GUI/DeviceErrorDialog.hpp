@@ -6,6 +6,7 @@
 
 #include "GUI_Utils.hpp"
 #include "Widgets/StateColor.hpp"
+#include <nlohmann/json.hpp>
 
 class Label;
 class Button;
@@ -42,9 +43,11 @@ public:
 
         RETRY_PROBLEM_SOLVED = 34,
         STOP_DRYING = 35,
+        CANCLE = 37,
         REMOVE_CLOSE_BTN = 39, // special case, do not show close button
-
-        ERROR_BUTTON_COUNT,
+        PROCEED = 41,
+        OK_JUMP_RACK = 49,
+        ABORT = 51,
 
         // old error code to pseudo action
         DBL_CHECK_CANCEL = 10000,
@@ -53,6 +56,8 @@ public:
         DBL_CHECK_RESUME = 10003,
         DBL_CHECK_OK = 10004,
     };
+    /* action params json */
+    nlohmann::json m_action_json;
 
 public:
     DeviceErrorDialog(MachineObject* obj,
@@ -66,26 +71,39 @@ public:
 
 public:
     wxString show_error_code(int error_code);
+    void     set_action_json(const nlohmann::json &action_json) { m_action_json = action_json; }
 
 protected:
     void init_button_list();
     void init_button(ActionButton style, wxString buton_text);
 
+    wxString parse_error_level(int error_code);
     std::vector<int> convert_to_pseudo_buttons(std::string error_str);
 
     void update_contents(const wxString& title, const wxString& text, const wxString& error_code,const wxString& image_url, const std::vector<int>& btns);
 
     void on_button_click(ActionButton btn_id);
+    void on_request_timeout(wxTimerEvent& event);
     void on_webrequest_state(wxWebRequestEvent& evt);
     void on_dpi_changed(const wxRect& suggested_rect);
+    wxBitmap get_default_loading_image();
+    wxBitmap get_default_error_image();
+    void clear_request_timer();
+    bool get_fail_snapshot_from_cloud();
+    bool get_fail_snapshot_from_local(const wxString& image_url);
 
 private:
     MachineObject* m_obj;
 
-    int m_error_code;
+    int m_error_code = 0;
     std::unordered_set<Button*> m_used_button;
 
     wxWebRequest web_request;
+    wxTimer* m_request_timer { nullptr };
+    std::atomic<bool> m_request_cancelled{false};
+
+    wxString m_local_img_url;
+
     wxStaticBitmap* m_error_picture;
     Label* m_error_msg_label{ nullptr };
     Label* m_error_code_label{ nullptr };

@@ -147,6 +147,7 @@ enum class NotificationType
 	BBLSeqPrintInfo,
 	//BBL: plugin install hint
 	BBLPluginInstallHint,
+    BBLFlushingVolumeZero,
 	BBLPluginUpdateAvailable,
 	BBLPreviewOnlyMode,
     BBLPrinterConfigUpdateAvailable,
@@ -156,7 +157,9 @@ enum class NotificationType
     BBLSliceMultiExtruderHeightOutside,
 	BBLBedFilamentIncompatible,
     BBLMixUsePLAAndPETG,
+    BBLMultiFilaNoWipeTower,
 	BBLNozzleFilamentIncompatible,
+	BBLTpuNozzleHasMultiFilament,
     AssemblyWarning,
     AssemblyInfo,
     NotificationTypeCount
@@ -243,6 +246,9 @@ public:
 	// Closes error or warning of the same text
 	void close_plater_error_notification(const std::string& text);
 	void close_plater_warning_notification(const std::string& text);
+	//The flushing volume matrix has zero values in its off-diagonal elements
+    void push_flushing_volume_error_notification(NotificationType type, NotificationLevel level, const std::string &text, const std::string &hypertext = "", std::function<bool(wxEvtHandler *)> callback  = std::function<bool(wxEvtHandler *)>());
+    void close_flushing_volume_error_notification(NotificationType type, NotificationLevel level);
 	// GCode exceeds the printing range of the extruder
     void push_slicing_customize_error_notification(NotificationType type, NotificationLevel level, const std::string &text, const std::string &hypertext = "", std::function<bool(wxEvtHandler*)> callback = std::function<bool(wxEvtHandler*)>());
     void close_slicing_customize_error_notification(NotificationType type, NotificationLevel level);
@@ -277,7 +283,7 @@ public:
 	void update_slicing_notif_dailytips(bool need_change);
 	void set_slicing_progress_began(bool is_helio = false);
 	// percentage negative = canceled, <0-1) = progress, 1 = completed
-	void set_slicing_progress_percentage(const std::string& text, float percentage);
+	void set_slicing_progress_percentage(const std::string& text, float percentage, bool is_helio = false);
 	void set_slicing_progress_canceled(const std::string& text);
 	// hides slicing progress notification imidietly
 	void set_slicing_progress_hidden();
