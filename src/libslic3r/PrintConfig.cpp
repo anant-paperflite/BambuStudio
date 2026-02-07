@@ -201,7 +201,8 @@ static t_config_enum_values s_keys_map_InfillPattern {
     { "zigzag",             ipZigZag },
     { "crosszag",           ipCrossZag },
     { "lockedzag",          ipLockedZag },
-    { "2dlattice",          ip2DLattice  }
+    { "2dlattice",          ip2DLattice },
+    { "checkered",          ipCheckered }
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(InfillPattern)
 
@@ -2557,6 +2558,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_values.push_back("crosszag");
     def->enum_values.push_back("lockedzag");
     def->enum_values.push_back("2dlattice");
+    def->enum_values.push_back("checkered");
     def->enum_labels.push_back(L("Concentric"));
     def->enum_labels.push_back(L("Rectilinear"));
     def->enum_labels.push_back(L("Grid"));
@@ -2579,7 +2581,15 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.push_back(L("Cross Zag"));
     def->enum_labels.push_back(L("Locked Zag"));
     def->enum_labels.push_back(L("2D Lattice"));
+    def->enum_labels.push_back(L("Checkered Pattern"));
     def->set_default_value(new ConfigOptionEnum<InfillPattern>(ipCubic));
+
+    def = this->add("checkered_infill_uv_map_path", coString);
+    def->label = L("UV Map file path");
+    def->category = L("Strength");
+    def->tooltip = L("Path to the UV map file used for checkered infill pattern. Used only when Sparse infill pattern is Checkered Pattern.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionString(""));
 
     def                = this->add("locked_skin_infill_pattern", coEnum);
     def->label         = L("Skin infill pattern");

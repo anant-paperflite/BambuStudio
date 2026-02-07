@@ -15,6 +15,7 @@
 #include "FillConcentricInternal.hpp"
 #include "FillConcentric.hpp"
 #include "FillFloatingConcentric.hpp"
+#include "FillCheckered.hpp"
 
 #define NARROW_INFILL_AREA_THRESHOLD 3
 
@@ -75,6 +76,9 @@ struct SurfaceFillParams
     float lattice_angle_1 = -45.0f;
     float lattice_angle_2 = 45.0f;
 
+    // Path to UV map file for checkered infill (used only when pattern == ipCheckered)
+    std::string checkered_uv_map_path;
+
 	bool operator<(const SurfaceFillParams &rhs) const {
 #define RETURN_COMPARE_NON_EQUAL(KEY) if (this->KEY < rhs.KEY) return true; if (this->KEY > rhs.KEY) return false;
 #define RETURN_COMPARE_NON_EQUAL_TYPED(TYPE, KEY) if (TYPE(this->KEY) < TYPE(rhs.KEY)) return true; if (TYPE(this->KEY) > TYPE(rhs.KEY)) return false;
@@ -108,6 +112,8 @@ struct SurfaceFillParams
         RETURN_COMPARE_NON_EQUAL(lattice_angle_2);
         RETURN_COMPARE_NON_EQUAL_TYPED(unsigned, skin_pattern);
         RETURN_COMPARE_NON_EQUAL_TYPED(unsigned, skeleton_pattern);
+		if (this->checkered_uv_map_path < rhs.checkered_uv_map_path) return true;
+		if (this->checkered_uv_map_path > rhs.checkered_uv_map_path) return false;
 		return false;
 	}
 
@@ -133,9 +139,10 @@ struct SurfaceFillParams
 				this->infill_rotate_step            == rhs.infill_rotate_step &&
 				this->symmetric_infill_y_axis	== rhs.symmetric_infill_y_axis &&
 			    this->lattice_angle_1 == rhs.lattice_angle_1 &&
-                this->lattice_angle_2 == rhs.lattice_angle_2&&
-				this-> skin_pattern     == rhs.skin_pattern &&
-				this-> skeleton_pattern == rhs.skeleton_pattern;
+                this->lattice_angle_2 == rhs.lattice_angle_2 &&
+				this->skin_pattern     == rhs.skin_pattern &&
+				this->skeleton_pattern == rhs.skeleton_pattern &&
+				this->checkered_uv_map_path == rhs.checkered_uv_map_path;
 	}
 };
 
@@ -214,6 +221,8 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
                 } else if (params.pattern == ip2DLattice) {
                     params.lattice_angle_1 = region_config.sparse_infill_lattice_angle_1;
                     params.lattice_angle_2 = region_config.sparse_infill_lattice_angle_2;
+                } else if (params.pattern == ipCheckered) {
+                    params.checkered_uv_map_path = region_config.checkered_infill_uv_map_path.value;
 				}
 
 				if (surface.is_solid()) {
@@ -633,6 +642,11 @@ void Layer::make_fills(FillAdaptive::Octree* adaptive_fill_octree, FillAdaptive:
 			FillMonotonicLineWGapFill* fill_monoline = dynamic_cast<FillMonotonicLineWGapFill*>(f.get());
 			fill_monoline->apply_gap_compensation = this->object()->print()->config().apply_top_surface_compensation;
 		}
+		else if (surface_fill.params.pattern == ipCheckered) {
+			FillCheckered *fill_checkered = dynamic_cast<FillCheckered*>(f.get());
+			if (fill_checkered)
+				fill_checkered->set_uv_map_file_path(surface_fill.params.checkered_uv_map_path);
+		}
 		else if (surface_fill.params.pattern == ipFloatingConcentric) {
 			FillFloatingConcentric* fill_contour = dynamic_cast<FillFloatingConcentric*>(f.get());
 			assert(fill_contour != nullptr);
@@ -806,7 +820,8 @@ Polylines Layer::generate_sparse_infill_polylines_for_anchoring(FillAdaptive::Oc
         case ipZigZag:
         case ipCrossZag:
         case ip2DLattice:
-		case ipLockedZag: break;
+		case ipLockedZag:
+        case ipCheckered: break;
         }
 
 		// Create the filler object.
@@ -817,7 +832,11 @@ Polylines Layer::generate_sparse_infill_polylines_for_anchoring(FillAdaptive::Oc
 		f->angle = surface_fill.params.angle;
 		f->adapt_fill_octree = (surface_fill.params.pattern == ipSupportCubic) ? support_fill_octree : adaptive_fill_octree;
 
-
+		if (surface_fill.params.pattern == ipCheckered) {
+			FillCheckered *fill_checkered = dynamic_cast<FillCheckered*>(f.get());
+			if (fill_checkered)
+				fill_checkered->set_uv_map_file_path(surface_fill.params.checkered_uv_map_path);
+		}
 		if (surface_fill.params.pattern == ipLightning)
 			dynamic_cast<FillLightning::Filler*>(f.get())->generator = lightning_generator;
 

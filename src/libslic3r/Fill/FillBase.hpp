@@ -6,6 +6,7 @@
 #include <float.h>
 #include <stdint.h>
 #include <stdexcept>
+#include <string>
 
 #include <type_traits>
 
@@ -158,6 +159,7 @@ public:
     virtual ThickPolylines fill_surface_arachne(const Surface* surface, const FillParams& params);
     virtual void set_lock_region_param(const LockRegionParam &lock_param){};
     virtual void set_skin_and_skeleton_pattern(const InfillPattern &skin_pattern, const InfillPattern &skeleton_pattern){};
+    virtual void set_uv_map_file_path(const std::string &path) {}
     // BBS: this method is used to fill the ExtrusionEntityCollection.
     // It call fill_surface by default
     virtual void fill_surface_extrusion(const Surface *surface, const FillParams &params, ExtrusionEntitiesPtr &out);

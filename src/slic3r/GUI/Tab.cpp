@@ -2730,6 +2730,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("sparse_infill_density");
         optgroup->append_single_option_line("fill_multiline");
         optgroup->append_single_option_line("sparse_infill_pattern", "fill-patterns#infill types and their properties of sparse");
+        optgroup->append_single_option_line("checkered_infill_uv_map_path", "", -1, true);
         optgroup->append_single_option_line("locked_skin_infill_pattern", "fill-patterns#infill types and their properties of sparse", -1, true);
         optgroup->append_single_option_line("skin_infill_density", "", -1, true);
         optgroup->append_single_option_line("locked_skeleton_infill_pattern", "fill-patterns#infill types and their properties of sparse", -1, true);
@@ -5428,6 +5429,9 @@ void Tab::load_current_preset()
             wxGetApp().obj_list()->update_objects_list_filament_column(1);
     }
     if (m_type == Preset::TYPE_PRINT) {
+        // Ensure new options exist in config so get_config_value() does not dereference null (e.g. old presets).
+        if (m_config->def()->has("checkered_infill_uv_map_path") && !m_config->has("checkered_infill_uv_map_path"))
+            m_config->set_key_value("checkered_infill_uv_map_path", new ConfigOptionString(""));
         if (auto tab = wxGetApp().plate_tab) {
             tab->m_config->apply(*m_config);
             tab->update_extruder_variants();

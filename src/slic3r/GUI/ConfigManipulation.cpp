@@ -762,6 +762,9 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
     bool lattice_options = have_infill && config->option<ConfigOptionEnum<InfillPattern>>("sparse_infill_pattern")->value == InfillPattern::ip2DLattice;
     for (auto el : {"sparse_infill_lattice_angle_1", "sparse_infill_lattice_angle_2"}) toggle_line(el, lattice_options);
 
+    bool is_checkered = have_infill && config->option<ConfigOptionEnum<InfillPattern>>("sparse_infill_pattern")->value == InfillPattern::ipCheckered;
+    toggle_line("checkered_infill_uv_map_path", is_checkered);
+
     bool has_spiral_vase         = config->opt_bool("spiral_mode");
     toggle_line("spiral_mode_smooth", has_spiral_vase);
     toggle_line("spiral_mode_max_xy_smoothing", config->opt_bool("spiral_mode_smooth"));
