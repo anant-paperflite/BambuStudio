@@ -644,8 +644,12 @@ void Layer::make_fills(FillAdaptive::Octree* adaptive_fill_octree, FillAdaptive:
 		}
 		else if (surface_fill.params.pattern == ipCheckered) {
 			FillCheckered *fill_checkered = dynamic_cast<FillCheckered*>(f.get());
-			if (fill_checkered)
+			if (fill_checkered) {
 				fill_checkered->set_uv_map_file_path(surface_fill.params.checkered_uv_map_path);
+				// Contour is object-centered; UV mesh (OBJ) is in raw model coords. Add center offset so raycast hits mesh.
+				const Point &co = this->object()->center_offset();
+				fill_checkered->set_contour_to_mesh_origin_mm(unscale_(co.x()), unscale_(co.y()));
+			}
 		}
 		else if (surface_fill.params.pattern == ipFloatingConcentric) {
 			FillFloatingConcentric* fill_contour = dynamic_cast<FillFloatingConcentric*>(f.get());
@@ -834,8 +838,11 @@ Polylines Layer::generate_sparse_infill_polylines_for_anchoring(FillAdaptive::Oc
 
 		if (surface_fill.params.pattern == ipCheckered) {
 			FillCheckered *fill_checkered = dynamic_cast<FillCheckered*>(f.get());
-			if (fill_checkered)
+			if (fill_checkered) {
 				fill_checkered->set_uv_map_file_path(surface_fill.params.checkered_uv_map_path);
+				const Point &co = this->object()->center_offset();
+				fill_checkered->set_contour_to_mesh_origin_mm(unscale_(co.x()), unscale_(co.y()));
+			}
 		}
 		if (surface_fill.params.pattern == ipLightning)
 			dynamic_cast<FillLightning::Filler*>(f.get())->generator = lightning_generator;

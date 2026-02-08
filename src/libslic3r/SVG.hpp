@@ -101,6 +101,16 @@ public:
     static void export_expolygons(const std::string &path, const Slic3r::ExPolygons &expolygons, std::string stroke_outer = "black", std::string stroke_holes = "blue", coordf_t stroke_width = 0) 
         { export_expolygons(path.c_str(), get_extents(expolygons), expolygons, stroke_outer, stroke_holes, stroke_width); }
 
+    /// Write a single polyline to an SVG file (bbox is derived from the polyline with optional margin).
+    static void export_polyline(const char *path, const Polyline &polyline, std::string stroke = "black", coordf_t stroke_width = 0, const coord_t bbox_offset = scale_(1.));
+    static void export_polyline(const std::string &path, const Polyline &polyline, std::string stroke = "black", coordf_t stroke_width = 0, const coord_t bbox_offset = scale_(1.))
+        { export_polyline(path.c_str(), polyline, stroke, stroke_width, bbox_offset); }
+
+    /// Write a single contour (polygon) to an SVG file (bbox derived from the polygon with optional margin).
+    static void export_contour(const char *path, const Polygon &contour, std::string fill = "grey", std::string stroke = "black", coordf_t stroke_width = 0, const coord_t bbox_offset = scale_(1.));
+    static void export_contour(const std::string &path, const Polygon &contour, std::string fill = "grey", std::string stroke = "black", coordf_t stroke_width = 0, const coord_t bbox_offset = scale_(1.))
+        { export_contour(path.c_str(), contour, fill, stroke, stroke_width, bbox_offset); }
+
     struct ExPolygonAttributes
     {
         ExPolygonAttributes() : ExPolygonAttributes("gray", "black", "blue") {}

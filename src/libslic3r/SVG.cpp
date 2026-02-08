@@ -475,6 +475,35 @@ void SVG::export_expolygons(const char *path, const BoundingBox &bbox, const Sli
     svg.Close();
 }
 
+void SVG::export_polyline(const char *path, const Polyline &polyline, std::string stroke, coordf_t stroke_width, const coord_t bbox_offset)
+{
+    if (polyline.points.empty())
+        return;
+    BoundingBox bbox = get_extents(polyline);
+    bbox.offset(bbox_offset);
+    SVG svg(path, bbox);
+    if (svg.is_opened()) {
+        svg.draw(polyline, std::move(stroke), stroke_width);
+        svg.Close();
+    }
+}
+
+void SVG::export_contour(const char *path, const Polygon &contour, std::string fill, std::string stroke, coordf_t stroke_width, const coord_t bbox_offset)
+{
+    if (contour.points.empty())
+        return;
+    BoundingBox bbox = get_extents(contour);
+    bbox.offset(bbox_offset);
+    SVG svg(path, bbox);
+    if (svg.is_opened()) {
+        if (!fill.empty())
+            svg.draw(contour, std::move(fill));
+        if (!stroke.empty() || stroke_width > 0)
+            svg.draw_outline(contour, std::move(stroke), stroke_width);
+        svg.Close();
+    }
+}
+
 // Paint the expolygons in the order they are presented, thus the latter overwrites the former expolygon.
 // 1) Paint all areas with the provided ExPolygonAttributes::color_fill and ExPolygonAttributes::fill_opacity.
 // 2) Optionally paint outlines of the areas if ExPolygonAttributes::outline_width > 0.
