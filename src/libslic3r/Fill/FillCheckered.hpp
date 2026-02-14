@@ -22,6 +22,7 @@ public:
     void set_uv_map_file_path(const std::string &path) override { m_uv_map_file_path = path; }
     // Offset in mm from object-centered contour to UV mesh (raw model) coordinates. Set from PrintObject::center_offset().
     void set_contour_to_mesh_origin_mm(double x_mm, double y_mm) { m_contour_to_mesh_origin_mm = Vec2d(x_mm, y_mm); }
+    void set_model_bounding_box_mm(BoundingBox bbox) { m_model_bounding_box_mm = bbox; }
     bool is_self_crossing() override { return true; }
 
 protected:
@@ -41,6 +42,7 @@ private:
 
     std::string m_uv_map_file_path;
     Vec2d       m_contour_to_mesh_origin_mm{0., 0.};
+    BoundingBox       m_model_bounding_box_mm;
 };
 
 } // namespace Slic3r

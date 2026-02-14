@@ -16,6 +16,7 @@
 #include "FillConcentric.hpp"
 #include "FillFloatingConcentric.hpp"
 #include "FillCheckered.hpp"
+#include "libslic3r/BoundingBox.hpp"
 
 #define NARROW_INFILL_AREA_THRESHOLD 3
 
@@ -647,8 +648,7 @@ void Layer::make_fills(FillAdaptive::Octree* adaptive_fill_octree, FillAdaptive:
 			if (fill_checkered) {
 				fill_checkered->set_uv_map_file_path(surface_fill.params.checkered_uv_map_path);
 				// Contour is object-centered; UV mesh (OBJ) is in raw model coords. Add center offset so raycast hits mesh.
-				const Point &co = this->object()->center_offset();
-				fill_checkered->set_contour_to_mesh_origin_mm(unscale_(co.x()), unscale_(co.y()));
+
 			}
 		}
 		else if (surface_fill.params.pattern == ipFloatingConcentric) {
