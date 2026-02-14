@@ -158,6 +158,28 @@ static Point point_to_model_surface_mm(const CachedUVMesh &cache, Point p, doubl
   return Point(x_mm, y_mm);
 }
 
+static Point point_mm_to_model_surface(const CachedUVMesh &cache, double x_mm, double y_mm, double outward_offset_mm) {
+  double bbox_center_x = (cache.bbox_min.x() + cache.bbox_max.x()) / 2;
+  double bbox_center_y = (cache.bbox_min.y() + cache.bbox_max.y()) / 2;
+
+  x_mm = x_mm - bbox_center_x;
+  y_mm = y_mm - bbox_center_y;
+
+  if (x_mm < 0) {
+    x_mm = x_mm + outward_offset_mm;
+  } else {
+    x_mm = x_mm - outward_offset_mm;
+  }
+
+  if (y_mm < 0) {
+    y_mm = y_mm + outward_offset_mm;
+  } else {
+    y_mm = y_mm - outward_offset_mm;
+  }
+
+  return Point::new_scale(x_mm, y_mm);
+}
+
 // Map 3D point (x,y,z) in mm to (u,v) in [0,1]^2 by finding which face the
 // point lies on, then interpolating that face's UV map. Returns nullopt if
 // point is not on mesh surface. If the UV mesh has Z in [-H, 0] (e.g. top=0,
@@ -207,14 +229,13 @@ static std::optional<Vec2f> point_to_uv(const CachedUVMesh &cache, double x_mm,
 
   float w0 = (*bary)[0], w1 = (*bary)[1], w2 = (*bary)[2];
   const std::array<Vec2f, 3> &uv_arr = cache.uvs[hit_idx];
-  // printf("UV array x: %f, %f, %f\n", uv_arr[0].x(), uv_arr[1].x(),
-  //        uv_arr[2].x());
-  // printf("UV array y: %f, %f, %f\n", uv_arr[0].y(), uv_arr[1].y(),
-  //        uv_arr[2].y());
+
   float u = w0 * uv_arr[0].x() + w1 * uv_arr[1].x() + w2 * uv_arr[2].x();
   float v = w0 * uv_arr[0].y() + w1 * uv_arr[1].y() + w2 * uv_arr[2].y();
   u = std::clamp(u, 0.f, 1.f);
   v = std::clamp(v, 0.f, 1.f);
+  // Boundary u=1 or v=1: assign to first cell (canonical [0, 1))
+
   return Vec2f(u, v);
 }
 
@@ -250,7 +271,7 @@ barycentric_coords_2d(const Vec2f &P, const Vec2f &A, const Vec2f &B, const Vec2
   if (w0 < -eps_inside || w0 > 1.f + eps_inside || s < -eps_inside || s > 1.f + eps_inside || t < -eps_inside || t > 1.f + eps_inside)
     return std::nullopt;
 
-  return std::array<float, 3>{w0, s, t};
+  return std::array<float, 3>{w0, s , t};
 }
 
 // Map (u, v) in [0,1]^2 to a 3D point on the mesh surface (mm, same frame as mesh).
@@ -278,9 +299,11 @@ static std::optional<Vec3d> uv_to_point(const CachedUVMesh &cache, float u, floa
     Vec3f V1 = its.vertices[face(1)];
     Vec3f V2 = its.vertices[face(2)];
     float w0 = (*bary)[0], w1 = (*bary)[1], w2 = (*bary)[2];
+
     double x = w0 * double(V0.x()) + w1 * double(V1.x()) + w2 * double(V2.x());
     double y = w0 * double(V0.y()) + w1 * double(V1.y()) + w2 * double(V2.y());
     double z = w0 * double(V0.z()) + w1 * double(V1.z()) + w2 * double(V2.z());
+
     return Vec3d(x, y, z);
   }
   printf("UV to point: no triangle contains (u,v)\n");
@@ -298,20 +321,15 @@ point_to_grid_cell(const CachedUVMesh &cache, double x_mm, double y_mm,
   float u = uv->x(), v = uv->y();
   int i = static_cast<int>(std::floor(u * grid_cols));
   int j = static_cast<int>(std::floor((v) * grid_rows));
-  if (u >= 1.f)
-    i = grid_cols - 1;
-  if (v >= 1.f)
-    j = grid_rows - 1;
+  
   i = std::clamp(i, 0, grid_cols - 1);
   j = std::clamp(j, 0, grid_rows - 1);
+
   return std::make_pair(i, j);
 }
 
-// Checkered pattern: fill cell iff (i + j) % 2 == 0
-inline bool is_fill_cell(int i, int j) { return (i + j) % 2 == 0; }
-
 // Black grid cell is the opposite of fill (checkered pattern)
-inline bool is_black_cell(int i, int j) { return (i + j) % 2 == 1; }
+inline bool is_black_cell(int i, int j) { return (i + j) % 2 == 0; }
 
 // Outward unit normal at contour vertex i (CCW contour: interior to the left,
 // so outward = right of edge). Returns (0,0) if contour too small or
@@ -467,10 +485,12 @@ static std::pair<float, int> segment_exit_cell(const Vec2f &a, const Vec2f &b,
 
   if (edge_best < 0)
     return {1.f, -1};
+
   return {t_best, edge_best};
 }
 
 // New cell when exiting through edge: 0=left, 1=right, 2=bottom, 3=top.
+// When next cell exceeds max row/col, wrap to 0; when below 0, wrap to max.
 static std::pair<int, int> adjacent_cell(int ci, int cj, int edge,
                                          int grid_cols, int grid_rows) {
   int ni = ci, nj = cj;
@@ -482,8 +502,10 @@ static std::pair<int, int> adjacent_cell(int ci, int cj, int edge,
     nj = cj - 1;
   else if (edge == 3)
     nj = cj + 1;
+  
   ni = std::clamp(ni, 0, grid_cols - 1);
   nj = std::clamp(nj, 0, grid_rows - 1);
+
   return {ni, nj};
 }
 
@@ -518,51 +540,47 @@ extract_black_contour_segments(const Polygon &contour, double z_mm,
       continue;
     }
 
-    auto cell_opt =
-        point_to_grid_cell(cache, ax_mm, ay_mm, z_mm, grid_cols, grid_rows);
+    auto cell_opt = point_to_grid_cell(cache, ax_mm, ay_mm, z_mm, grid_cols, grid_rows);
     if (!cell_opt) {
       printf("No grid cell hit\n");
       continue;
     }
     
+    printf("A_xy: %d, %d\n", A_xy.x(), A_xy.y());
+    printf("B_xy: %d, %d\n", B_xy.x(), B_xy.y());
     printf("Grid cell hit: %d, %d\n", cell_opt->first, cell_opt->second);
 
     int ci = cell_opt->first, cj = cell_opt->second;
 
     Vec2f current_uv = *A_uv;
     Point current_xy = A_xy;
-
+    
     for (;;) {
-      auto [t, exit_edge] =
-          segment_exit_cell(current_uv, *B_uv, ci, cj, grid_cols, grid_rows);
+      auto [t, exit_edge] = segment_exit_cell(current_uv, *B_uv, ci, cj, grid_cols, grid_rows);
 
       printf("Exit edge: %d, t: %f\n", exit_edge, t);
 
-      printf("End uv: %f, %f\n", double(current_uv.x()) +
-      t * (double(B_uv->x()) - double(current_uv.x())), double(current_uv.y()) +
-      t * (double(B_uv->y()) - double(current_uv.y())));
+      const double end_uv_x = double(current_uv.x()) +
+                           t * (double(B_uv->x()) - double(current_uv.x()));
+      const double end_uv_y = double(current_uv.y()) +
+                           t * (double(B_uv->y()) - double(current_uv.y()));
 
-      Point end_uv(
-        coord_t(std::round(double(current_uv.x()) +
-                           t * (double(B_uv->x()) - double(current_uv.x())))),
-        coord_t(std::round(double(current_uv.y()) +
-                           t * (double(B_uv->y()) - double(current_uv.y())))));
+      printf("End uv: %f, %f\n", end_uv_x, end_uv_y);
 
-      printf("End uv: %f, %f\n", end_uv.x(), end_uv.y());
-
-      auto uv_to_point_opt = uv_to_point(cache, end_uv.x(), end_uv.y());
+      auto uv_to_point_opt = uv_to_point(cache, end_uv_x, end_uv_y);
       if (!uv_to_point_opt) {
         printf("No UV to point hit\n");
         continue;
       }
 
-      Point end_xy = Point::new_scale(uv_to_point_opt->x(), uv_to_point_opt->y());
-
-      printf("End xy: %f, %f\n", end_xy.x(), end_xy.y());
+      printf("UV to point: x: %f, y: %f, z: %f\n", uv_to_point_opt->x(), uv_to_point_opt->y(), uv_to_point_opt->z());
+      Point end_xy = Point(uv_to_point_opt->x(), uv_to_point_opt->y());
 
       if (is_black_cell(ci, cj)){
-        printf("Adding segment: %f, %f -> %f, %f\n", current_xy.x(), current_xy.y(), end_xy.x(), end_xy.y());
-        segments.push_back({current_xy, end_xy});
+        printf("Adding segment: %d, %d -> %d, %d\n", current_xy.x(), current_xy.y(), end_xy.x(), end_xy.y());
+        Point start_point = point_mm_to_model_surface(cache, current_xy.x(), current_xy.y(), outward_offset_mm);
+        Point end_point = point_mm_to_model_surface(cache, end_xy.x(), end_xy.y(), outward_offset_mm);
+        segments.push_back({start_point, end_point});
       }
 
       if (t >= 1.f - 1e-6f)
@@ -573,55 +591,72 @@ extract_black_contour_segments(const Polygon &contour, double z_mm,
                          current_uv.y() + t * (B_uv->y() - current_uv.y()));
       if (exit_edge >= 0) {
         auto next = adjacent_cell(ci, cj, exit_edge, grid_cols, grid_rows);
+
+        printf("Next cell: %d, %d for point (%d, %d)\n", next.first, next.second, current_xy.x(), current_xy.y());
+        if(next.first == ci && next.second == cj) {
+          printf("Next cell is the same as the current cell, break\n");
+        }
+        
         ci = next.first;
         cj = next.second;
+
+        printf("Exit edge: %d, Next cell: %d, %d\n", exit_edge, ci, cj);
       }
     }
   }
 
-  // Merge consecutive segments that share an endpoint into polylines.
-  const coord_t eps2 = scale_(0.001) * scale_(0.001);
-  auto same_point = [eps2](const Point &a, const Point &b) {
-    Vec2d d = (a - b).cast<double>();
-    return d.squaredNorm() <= eps2;
-  };
-  std::vector<bool> used(segments.size(), false);
-  for (size_t i = 0; i < segments.size(); ++i) {
-    if (used[i])
-      continue;
+  printf("Segments: %zu\n", segments.size());
+  for (const auto &segment : segments) {
+    std::cout << "Segment: " << segment.first.x() << ", " << segment.first.y() << " -> " << segment.second.x() << ", " << segment.second.y() << std::endl;
     Polyline pl;
-    pl.points.push_back(segments[i].first);
-    pl.points.push_back(segments[i].second);
-    used[i] = true;
-    bool changed;
-    do {
-      changed = false;
-      for (size_t j = 0; j < segments.size(); ++j) {
-        if (used[j])
-          continue;
-        const Point &s0 = segments[j].first, &s1 = segments[j].second;
-        if (same_point(pl.points.back(), s0)) {
-          pl.points.push_back(s1);
-          used[j] = true;
-          changed = true;
-        } else if (same_point(pl.points.back(), s1)) {
-          pl.points.push_back(s0);
-          used[j] = true;
-          changed = true;
-        } else if (same_point(pl.points.front(), s0)) {
-          pl.points.insert(pl.points.begin(), s1);
-          used[j] = true;
-          changed = true;
-        } else if (same_point(pl.points.front(), s1)) {
-          pl.points.insert(pl.points.begin(), s0);
-          used[j] = true;
-          changed = true;
-        }
-      }
-    } while (changed);
-    if (pl.points.size() >= 2)
-      result.push_back(std::move(pl));
+    pl.points.push_back(segment.first);
+    pl.points.push_back(segment.second);
+    result.push_back(pl);
   }
+
+  // Merge consecutive segments that share an endpoint into polylines.
+  // const coord_t eps2 = scale_(0.001) * scale_(0.001);
+  // auto same_point = [eps2](const Point &a, const Point &b) {
+  //   Vec2d d = (a - b).cast<double>();
+  //   return d.squaredNorm() <= eps2;
+  // };
+  // std::vector<bool> used(segments.size(), false);
+  // for (size_t i = 0; i < segments.size(); ++i) {
+  //   if (used[i])
+  //     continue;
+  //   Polyline pl;
+  //   pl.points.push_back(segments[i].first);
+  //   pl.points.push_back(segments[i].second);
+  //   used[i] = true;
+  //   bool changed;
+  //   do {
+  //     changed = false;
+  //     for (size_t j = 0; j < segments.size(); ++j) {
+  //       if (used[j])
+  //         continue;
+  //       const Point &s0 = segments[j].first, &s1 = segments[j].second;
+  //       if (same_point(pl.points.back(), s0)) {
+  //         pl.points.push_back(s1);
+  //         used[j] = true;
+  //         changed = true;
+  //       } else if (same_point(pl.points.back(), s1)) {
+  //         pl.points.push_back(s0);
+  //         used[j] = true;
+  //         changed = true;
+  //       } else if (same_point(pl.points.front(), s0)) {
+  //         pl.points.insert(pl.points.begin(), s1);
+  //         used[j] = true;
+  //         changed = true;
+  //       } else if (same_point(pl.points.front(), s1)) {
+  //         pl.points.insert(pl.points.begin(), s0);
+  //         used[j] = true;
+  //         changed = true;
+  //       }
+  //     }
+  //   } while (changed);
+  //   if (pl.points.size() >= 2)
+  //     result.push_back(std::move(pl));
+  // }
   return result;
 }
 
@@ -702,105 +737,7 @@ void FillCheckered::_fill_surface_single(
   Polygon outer_contour = expolygon.contour;
   double z_mm = this->z;
 
-  // Detect where every contour point lies in UV space and whether it's on a
-  // black grid cell.
-  // std::shared_ptr<CachedUVMesh> cache =
-  // get_or_load_uv_mesh(m_uv_map_file_path);
-  // if (cache && cache->valid) {
-  //     const double outward_offset_mm = std::max(0., 0.5 * this->spacing -
-  //     this->overlap); double ox = m_contour_to_mesh_origin_mm.x(); double oy
-  //     = m_contour_to_mesh_origin_mm.y(); std::vector<ContourPointUVInfo>
-  //     uv_info = get_contour_points_uv_info(
-  //         outer_contour, z_mm, *cache, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS,
-  //         ox, oy, outward_offset_mm);
-  //     size_t on_black = 0, on_white = 0, no_uv = 0;
-  //     for (const ContourPointUVInfo &info : uv_info) {
-  //         if (!info.grid_cell) {
-  //             ++no_uv;
-  //             continue;
-  //         }
-  //         if (info.is_black_cell)
-  //             ++on_black;
-  //         else
-  //             ++on_white;
-  //     }
-  //     // If all rays missed, OBJ may be in object-centered coords: retry with
-  //     origin 0,0 if (no_uv == uv_info.size() &&
-  //     !outer_contour.points.empty()) {
-  //         std::vector<ContourPointUVInfo> uv_info0 =
-  //         get_contour_points_uv_info(
-  //             outer_contour, z_mm, *cache, DEFAULT_GRID_COLS,
-  //             DEFAULT_GRID_ROWS, 0., 0., outward_offset_mm);
-  //         size_t no_uv0 = 0;
-  //         for (const ContourPointUVInfo &info : uv_info0)
-  //             if (!info.grid_cell) ++no_uv0;
-  //         if (no_uv0 < uv_info0.size()) {
-  //             ox = 0.; oy = 0.;
-  //             uv_info = std::move(uv_info0);
-  //             on_black = on_white = no_uv = 0;
-  //             for (const ContourPointUVInfo &info : uv_info) {
-  //                 if (!info.grid_cell) { ++no_uv; continue; }
-  //                 if (info.is_black_cell) ++on_black; else ++on_white;
-  //             }
-  //             printf("FillCheckered: all rays missed with center_offset; used
-  //             origin=0 and got %zu hits\n", uv_info.size() - no_uv);
-  //         }
-  //     }
-  //     printf("FillCheckered: contour points uv_info: %zu on_black=%zu
-  //     on_white=%zu no_uv=%zu\n",
-  //            uv_info.size(), on_black, on_white, no_uv);
-  //     // Print ContourPointUVInfo to JSON
-  //     {
-  //         std::string path_json =
-  //         "/Users/anant/Documents/Personal/BambuStudio/.cursor/fill_checkered_contour_uv_info.json";
-  //         std::ofstream fj(path_json);
-  //         if (fj) {
-  //             fj << "{\"layer_id\":" << int(this->layer_id) << ",\"z_mm\":"
-  //             << z_mm
-  //                << ",\"contour_points\":[";
-  //             for (size_t i = 0; i < uv_info.size(); ++i) {
-  //                 const ContourPointUVInfo &info = uv_info[i];
-  //                 if (i > 0) fj << ",";
-  //                 fj << "{\"point_mm\":[" << unscale_(info.point.x()) << ","
-  //                 << unscale_(info.point.y()) << "]"; if (info.uv) fj <<
-  //                 ",\"uv\":[" << info.uv->x() << "," << info.uv->y() << "]";
-  //                 else fj << ",\"uv\":null";
-  //                 if (info.grid_cell) fj << ",\"grid_cell\":[" <<
-  //                 info.grid_cell->first << "," << info.grid_cell->second <<
-  //                 "]"; else fj << ",\"grid_cell\":null"; fj <<
-  //                 ",\"is_black_cell\":" << (info.is_black_cell ? "true" :
-  //                 "false") << "}";
-  //             }
-  //             fj << "]}\n";
-  //             printf("FillCheckered: wrote ContourPointUVInfo to %s\n",
-  //             path_json.c_str());
-  //         }
-  //     }
-  //     // #region agent log — verification: mesh bbox, origin, ray,
-  //     inside_bbox if (!outer_contour.points.empty()) {
-  //         const Vec3f &bmn = cache->bbox_min, &bmx = cache->bbox_max;
-  //         double c0x = unscale_(outer_contour.points.front().x());
-  //         double c0y = unscale_(outer_contour.points.front().y());
-  //         double rx = c0x + ox, ry = c0y + oy;
-  //         const double tol = 0.01;
-  //         bool inside = (rx >= double(bmn.x()) - tol && rx <= double(bmx.x())
-  //         + tol &&
-  //                        ry >= double(bmn.y()) - tol && ry <= double(bmx.y())
-  //                        + tol && z_mm >= double(bmn.z()) - tol && z_mm <=
-  //                        double(bmx.z()) + tol);
-  //         std::ofstream
-  //         f("/Users/anant/Documents/Personal/BambuStudio/.cursor/debug.log",
-  //         std::ios::app); if (f)
-  //             f << "FillCheckered mesh_bbox x[" << bmn.x() << "," << bmx.x()
-  //             << "] y[" << bmn.y() << "," << bmx.y() << "] z[" << bmn.z() <<
-  //             "," << bmx.z() << "] origin=(" << ox << "," << oy << ") ray0=("
-  //             << rx << "," << ry << "," << z_mm << ") inside_bbox=" <<
-  //             (inside ? 1 : 0) << " no_uv=" << no_uv << "\n";
-  //     }
-  // #endregion
-  //}
-
-  if (size_t(this->layer_id) == 10) {
+  if(size_t(this->layer_id) == 10) {
     std::shared_ptr<CachedUVMesh> cache =
         get_or_load_uv_mesh(m_uv_map_file_path);
 
@@ -823,64 +760,64 @@ void FillCheckered::_fill_surface_single(
       double bbox_center_y = (cache->bbox_min.y() + cache->bbox_max.y()) / 2;
       printf("Bbox center: %f, %f\n", bbox_center_x, bbox_center_y);
 
-      // polylines_out = extract_black_contour_segments(
-      //     outer_contour, z_mm, *cache, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS, ox,
-      //     oy, outward_offset_mm);
+      polylines_out = extract_black_contour_segments(
+          outer_contour, z_mm, *cache, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS, ox,
+          oy, outward_offset_mm);
 
-      // printf("Polylines out: %zu\n", polylines_out.size());
-      // for (const Polyline &pl : polylines_out) {
-      //   for (const Point &p : pl.points) {
-      //     printf("Point: %f, %f\n", p.x(), p.y());
-      //   }
-      // }
-
-      for (const Point &p : outer_contour.points) {
-
-        double x_mm = unscale_(p.x());
-        double y_mm = unscale_(p.y());
-
-        if (x_mm < 0) {
-          x_mm = x_mm - outward_offset_mm;
-        } else {
-          x_mm = x_mm + outward_offset_mm;
+      printf("Polylines out: %zu\n", polylines_out.size());
+      for (const Polyline &pl : polylines_out) {
+        for (const Point &p : pl.points) {
+          //std::cout << "Point: " << p.x() << ", " << p.y() << std::endl;
         }
-
-        if (y_mm < 0) {
-          y_mm = y_mm - outward_offset_mm;
-        } else {
-          y_mm = y_mm + outward_offset_mm;
-        }
-
-        x_mm = bbox_center_x + x_mm;
-        y_mm = bbox_center_y + y_mm;
-        // x_mm = 40;
-        // y_mm = 10;
-        z_mm = 10;
-
-        printf("X mm: %f, Y mm: %f, Z mm: %f\n", x_mm, y_mm, z_mm);
-
-        auto uv = point_to_uv(*cache, x_mm, y_mm, z_mm);
-        if (!uv) {
-          printf("No UV hit\n");
-          continue;
-        }
-
-        printf("UV: %f, %f\n", uv->x(), uv->y());
-
-        auto uv_to_point_opt = uv_to_point(*cache, uv->x(), uv->y());
-        if (!uv_to_point_opt) {
-          printf("No UV to point hit\n");
-          continue;
-        }
-
-        Point end_xy = Point::new_scale(uv_to_point_opt->x(), uv_to_point_opt->y());
-
-        printf("End xy: %f, %f\n", end_xy.x(), end_xy.y());
       }
-    }
-  }
 
-  polylines_out.push_back(Polyline({Point(0, 0), Point(10, 10)}));
+
+      // for (const Point &p : outer_contour.points) {
+
+      //   printf("Point: %f, %f\n", p.x(), p.y());
+      //   double x_mm = unscale_(p.x());
+      //   double y_mm = unscale_(p.y());
+
+      //   if (x_mm < 0) {
+      //     x_mm = x_mm - outward_offset_mm;
+      //   } else {
+      //     x_mm = x_mm + outward_offset_mm;
+      //   }
+
+      //   if (y_mm < 0) {
+      //     y_mm = y_mm - outward_offset_mm;
+      //   } else {
+      //     y_mm = y_mm + outward_offset_mm;
+      //   }
+
+      //   x_mm = bbox_center_x + x_mm;
+      //   y_mm = bbox_center_y + y_mm;
+      //   // x_mm = 40;
+      //   // y_mm = 10;
+      //   z_mm = 10;
+
+      //   printf("X mm: %f, Y mm: %f, Z mm: %f\n", x_mm, y_mm, z_mm);
+
+      //   auto uv = point_to_uv(*cache, x_mm, y_mm, z_mm);
+      //   if (!uv) {
+      //     printf("No UV hit\n");
+      //     continue;
+      //   }
+
+      //   printf("UV: %f, %f\n", uv->x(), uv->y());
+
+      //   auto uv_to_point_opt = uv_to_point(*cache, uv->x(), uv->y());
+      //   if (!uv_to_point_opt) {
+      //     printf("No UV to point hit\n");
+      //     continue;
+      //   }
+
+      //   printf("UV to point: x: %f, y: %f, z: %f\n", uv_to_point_opt->x(), uv_to_point_opt->y(), uv_to_point_opt->z());
+      // }
+    }
+  }else{
+    polylines_out.push_back(Polyline({Point(0, 0), Point(10, 10)}));
+  }
 }
 
 } // namespace Slic3r
