@@ -782,49 +782,49 @@ extract_black_contour_segments(const Polygon &contour, double z_mm,
     result.push_back(pl);
   }
 
-  // Merge consecutive segments that share an endpoint into polylines.
-  // const coord_t eps2 = scale_(0.001) * scale_(0.001);
-  // auto same_point = [eps2](const Point &a, const Point &b) {
-  //   Vec2d d = (a - b).cast<double>();
-  //   return d.squaredNorm() <= eps2;
-  // };
-  // std::vector<bool> used(segments.size(), false);
-  // for (size_t i = 0; i < segments.size(); ++i) {
-  //   if (used[i])
-  //     continue;
-  //   Polyline pl;
-  //   pl.points.push_back(segments[i].first);
-  //   pl.points.push_back(segments[i].second);
-  //   used[i] = true;
-  //   bool changed;
-  //   do {
-  //     changed = false;
-  //     for (size_t j = 0; j < segments.size(); ++j) {
-  //       if (used[j])
-  //         continue;
-  //       const Point &s0 = segments[j].first, &s1 = segments[j].second;
-  //       if (same_point(pl.points.back(), s0)) {
-  //         pl.points.push_back(s1);
-  //         used[j] = true;
-  //         changed = true;
-  //       } else if (same_point(pl.points.back(), s1)) {
-  //         pl.points.push_back(s0);
-  //         used[j] = true;
-  //         changed = true;
-  //       } else if (same_point(pl.points.front(), s0)) {
-  //         pl.points.insert(pl.points.begin(), s1);
-  //         used[j] = true;
-  //         changed = true;
-  //       } else if (same_point(pl.points.front(), s1)) {
-  //         pl.points.insert(pl.points.begin(), s0);
-  //         used[j] = true;
-  //         changed = true;
-  //       }
-  //     }
-  //   } while (changed);
-  //   if (pl.points.size() >= 2)
-  //     result.push_back(std::move(pl));
-  // }
+  //Merge consecutive segments that share an endpoint into polylines.
+  const coord_t eps2 = scale_(0.001) * scale_(0.001);
+  auto same_point = [eps2](const Point &a, const Point &b) {
+    Vec2d d = (a - b).cast<double>();
+    return d.squaredNorm() <= eps2;
+  };
+  std::vector<bool> used(segments.size(), false);
+  for (size_t i = 0; i < segments.size(); ++i) {
+    if (used[i])
+      continue;
+    Polyline pl;
+    pl.points.push_back(segments[i].first);
+    pl.points.push_back(segments[i].second);
+    used[i] = true;
+    bool changed;
+    do {
+      changed = false;
+      for (size_t j = 0; j < segments.size(); ++j) {
+        if (used[j])
+          continue;
+        const Point &s0 = segments[j].first, &s1 = segments[j].second;
+        if (same_point(pl.points.back(), s0)) {
+          pl.points.push_back(s1);
+          used[j] = true;
+          changed = true;
+        } else if (same_point(pl.points.back(), s1)) {
+          pl.points.push_back(s0);
+          used[j] = true;
+          changed = true;
+        } else if (same_point(pl.points.front(), s0)) {
+          pl.points.insert(pl.points.begin(), s1);
+          used[j] = true;
+          changed = true;
+        } else if (same_point(pl.points.front(), s1)) {
+          pl.points.insert(pl.points.begin(), s0);
+          used[j] = true;
+          changed = true;
+        }
+      }
+    } while (changed);
+    if (pl.points.size() >= 2)
+      result.push_back(std::move(pl));
+  }
   return result;
 }
 
@@ -905,7 +905,7 @@ void FillCheckered::_fill_surface_single(
   Polygon outer_contour = expolygon.contour;
   double z_mm = this->z;
 
-  if(size_t(this->layer_id) == 158) {
+  //if(size_t(this->layer_id) == 158) {
     std::shared_ptr<CachedUVMesh> cache =
         get_or_load_uv_mesh(m_uv_map_file_path);
 
@@ -928,50 +928,50 @@ void FillCheckered::_fill_surface_single(
       double bbox_center_y = (cache->bbox_min.y() + cache->bbox_max.y()) / 2;
       printf("Bbox center: %f, %f\n", bbox_center_x, bbox_center_y);
 
-      // polylines_out = extract_black_contour_segments(
-      //     outer_contour, z_mm, *cache, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS, ox,
-      //     oy, outward_offset_mm);
+      polylines_out = extract_black_contour_segments(
+          outer_contour, z_mm, *cache, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS, ox,
+          oy, outward_offset_mm);
 
-      // printf("Polylines out: %zu\n", polylines_out.size());
-      // for (const Polyline &pl : polylines_out) {
-      //   for (const Point &p : pl.points) {
-      //     //std::cout << "Point: " << p.x() << ", " << p.y() << std::endl;
-      //   }
-      // }
-
-      size_t n = outer_contour.points.size();
-      if (n == 0)
-        return;
-
-      for (size_t k = 0; k < n; ++k) {
-        const Point A_xy = point_to_model_surface_mm(*cache, outer_contour.points[k], outward_offset_mm);
-        const Point B_xy = point_to_model_surface_mm(*cache, outer_contour.points[(k + 1) % n], outward_offset_mm);
-        double ax_mm = A_xy.x();
-        double ay_mm = A_xy.y();
-        double bx_mm = B_xy.x();
-        double by_mm = B_xy.y();
-        
-        auto A_uv = point_to_uv(*cache, ax_mm, ay_mm, z_mm, Vec3d(bx_mm, by_mm, z_mm));
-        auto B_uv = point_to_uv(*cache, bx_mm, by_mm, z_mm, Vec3d(ax_mm, ay_mm, z_mm));
-        if (!A_uv || !B_uv){
-          printf("No UV hit\n");
-          continue;
+      printf("Polylines out: %zu\n", polylines_out.size());
+      for (const Polyline &pl : polylines_out) {
+        for (const Point &p : pl.points) {
+          //std::cout << "Point: " << p.x() << ", " << p.y() << std::endl;
         }
-
-        printf("A uv: %f, %f, B uv: %f, %f\n", A_uv->x(), A_uv->y(), B_uv->x(), B_uv->y());
-
-        auto segments = subdivide_uv_segment_by_grid(*A_uv, *B_uv, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS);
-        for (const auto &segment : segments) {
-          printf("Segment: %f, %f -> %f, %f in cell %d, %d\n", segment.start_uv.x(), segment.start_uv.y(), segment.end_uv.x(), segment.end_uv.y(), segment.ci, segment.cj);
-        }
-
-        printf("Segments: %zu\n", segments.size());
       }
 
+      // size_t n = outer_contour.points.size();
+      // if (n == 0)
+      //   return;
+
+      // for (size_t k = 0; k < n; ++k) {
+      //   const Point A_xy = point_to_model_surface_mm(*cache, outer_contour.points[k], outward_offset_mm);
+      //   const Point B_xy = point_to_model_surface_mm(*cache, outer_contour.points[(k + 1) % n], outward_offset_mm);
+      //   double ax_mm = A_xy.x();
+      //   double ay_mm = A_xy.y();
+      //   double bx_mm = B_xy.x();
+      //   double by_mm = B_xy.y();
+        
+      //   auto A_uv = point_to_uv(*cache, ax_mm, ay_mm, z_mm, Vec3d(bx_mm, by_mm, z_mm));
+      //   auto B_uv = point_to_uv(*cache, bx_mm, by_mm, z_mm, Vec3d(ax_mm, ay_mm, z_mm));
+      //   if (!A_uv || !B_uv){
+      //     printf("No UV hit\n");
+      //     continue;
+      //   }
+
+      //   printf("A uv: %f, %f, B uv: %f, %f\n", A_uv->x(), A_uv->y(), B_uv->x(), B_uv->y());
+
+      //   auto segments = subdivide_uv_segment_by_grid(*A_uv, *B_uv, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS);
+      //   for (const auto &segment : segments) {
+      //     printf("Segment: %f, %f -> %f, %f in cell %d, %d\n", segment.start_uv.x(), segment.start_uv.y(), segment.end_uv.x(), segment.end_uv.y(), segment.ci, segment.cj);
+      //   }
+
+      //   printf("Segments: %zu\n", segments.size());
+      // }
+
     }
-  }else{
-    polylines_out.push_back(Polyline({Point(0, 0), Point(10, 10)}));
-  }
+  // }else{
+  //   polylines_out.push_back(Polyline({Point(0, 0), Point(10, 10)}));
+  // }
 }
 
 } // namespace Slic3r
