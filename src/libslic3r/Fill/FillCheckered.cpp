@@ -4,14 +4,15 @@
 #include "../Format/OBJ.hpp"
 #include "../Point.hpp"
 #include "../SVG.hpp"
+#include "../ShortestPath.hpp"
 #include "../TriangleMesh.hpp"
 #include "../Utils.hpp"
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -26,7 +27,7 @@ namespace Slic3r {
 
 namespace {
 
-// Default grid resolution for UV space [0,1]^2
+// Default grid resolution for UV space [0,1]^2 (12 cells per row/column, indices 0..11).
 constexpr int DEFAULT_GRID_COLS = 12;
 constexpr int DEFAULT_GRID_ROWS = 12;
 
@@ -97,7 +98,7 @@ std::shared_ptr<CachedUVMesh> get_or_load_uv_mesh(const std::string &path) {
   std::lock_guard<std::mutex> lock(s_cache_mutex);
   auto it = s_uv_cache.find(path);
   if (it != s_uv_cache.end()) {
-    printf("FillCheckered: UV map cache hit for %s\n", path.c_str());
+    // printf("FillCheckered: UV map cache hit for %s\n", path.c_str());
     return it->second;
   }
   auto opt = CachedUVMesh::load(path);
@@ -132,7 +133,8 @@ barycentric_coords_3d(const Vec3d &Q, const Vec3d &A, const Vec3d &B,
   return std::array<float, 3>{float(w0), float(s), float(t)};
 }
 
-static Point point_to_model_surface_mm(const CachedUVMesh &cache, Point p, double outward_offset_mm) {
+static Point point_to_model_surface_mm(const CachedUVMesh &cache, Point p,
+                                       double outward_offset_mm) {
   double x_mm = unscale_(p.x());
   double y_mm = unscale_(p.y());
 
@@ -157,7 +159,8 @@ static Point point_to_model_surface_mm(const CachedUVMesh &cache, Point p, doubl
   return Point(x_mm, y_mm);
 }
 
-static Point point_mm_to_model_surface(const CachedUVMesh &cache, double x_mm, double y_mm, double outward_offset_mm) {
+static Point point_mm_to_model_surface(const CachedUVMesh &cache, double x_mm,
+                                       double y_mm, double outward_offset_mm) {
   double bbox_center_x = (cache.bbox_min.x() + cache.bbox_max.x()) / 2;
   double bbox_center_y = (cache.bbox_min.y() + cache.bbox_max.y()) / 2;
 
@@ -186,9 +189,9 @@ static Point point_mm_to_model_surface(const CachedUVMesh &cache, double x_mm, d
 // When next_xyz_mm is provided and the hit lies on a seam (u or v at 0 or 1),
 // we raycast the next point and canonicalize UV so the returned value is on the
 // same "side" of the seam as the direction toward the next point.
-static std::optional<Vec2f> point_to_uv(const CachedUVMesh &cache, double x_mm,
-                                        double y_mm, double z_mm,
-                                        std::optional<Vec3d> next_xyz_mm = std::nullopt) {
+static std::optional<Vec2f>
+point_to_uv(const CachedUVMesh &cache, double x_mm, double y_mm, double z_mm,
+            std::optional<Vec3d> next_xyz_mm = std::nullopt) {
   const indexed_triangle_set &its = cache.mesh.its;
   if (its.vertices.empty() || its.indices.empty() ||
       cache.uvs.size() != its.indices.size()) {
@@ -226,9 +229,18 @@ static std::optional<Vec2f> point_to_uv(const CachedUVMesh &cache, double x_mm,
 
   float w0 = (*bary)[0], w1 = (*bary)[1], w2 = (*bary)[2];
   const std::array<Vec2f, 3> &uv_arr = cache.uvs[hit_idx];
-
-  float u = w0 * uv_arr[0].x() + w1 * uv_arr[1].x() + w2 * uv_arr[2].x();
-  float v = w0 * uv_arr[0].y() + w1 * uv_arr[1].y() + w2 * uv_arr[2].y();
+  // Fold vertex UVs in (1, 2] into (0, 1] so interpolated UV stays in [0,1] and
+  // right-edge seam (e.g. u=1.073) maps to the last logical cell correctly.
+  auto fold_uv = [](float t) {
+    if (t > 1.f && t <= 2.f) return 2.f - t;
+    if (t > 2.f) return t - std::floor(t);
+    if (t < 0.f) return t - std::floor(t);
+    return t;
+  };
+  float u0 = fold_uv(uv_arr[0].x()), u1 = fold_uv(uv_arr[1].x()), u2 = fold_uv(uv_arr[2].x());
+  float v0 = fold_uv(uv_arr[0].y()), v1 = fold_uv(uv_arr[1].y()), v2 = fold_uv(uv_arr[2].y());
+  float u = w0 * u0 + w1 * u1 + w2 * u2;
+  float v = w0 * v0 + w1 * v1 + w2 * v2;
   u = std::clamp(u, 0.f, 1.f);
   v = std::clamp(v, 0.f, 1.f);
 
@@ -236,7 +248,8 @@ static std::optional<Vec2f> point_to_uv(const CachedUVMesh &cache, double x_mm,
   const bool on_u_seam = (u <= seam_eps || u >= 1.f - seam_eps);
   const bool on_v_seam = (v <= seam_eps || v >= 1.f - seam_eps);
   if ((on_u_seam || on_v_seam) && next_xyz_mm) {
-    std::optional<Vec2f> next_uv = point_to_uv(cache, next_xyz_mm->x(), next_xyz_mm->y(), next_xyz_mm->z());
+    std::optional<Vec2f> next_uv = point_to_uv(
+        cache, next_xyz_mm->x(), next_xyz_mm->y(), next_xyz_mm->z());
     if (next_uv) {
       if (on_u_seam) {
         if (u >= 1.f - seam_eps && next_uv->x() < 0.5f)
@@ -256,10 +269,11 @@ static std::optional<Vec2f> point_to_uv(const CachedUVMesh &cache, double x_mm,
   return Vec2f(u, v);
 }
 
-// Barycentric coordinates of point P in 2D triangle (A, B, C): P = w0*A + w1*B + w2*C.
-// Returns nullopt if degenerate or P is outside the triangle.
+// Barycentric coordinates of point P in 2D triangle (A, B, C): P = w0*A + w1*B
+// + w2*C. Returns nullopt if degenerate or P is outside the triangle.
 static std::optional<std::array<float, 3>>
-barycentric_coords_2d(const Vec2f &P, const Vec2f &A, const Vec2f &B, const Vec2f &C) {
+barycentric_coords_2d(const Vec2f &P, const Vec2f &A, const Vec2f &B,
+                      const Vec2f &C) {
   float v0x = B.x() - A.x();
   float v0y = B.y() - A.y();
   float v1x = C.x() - A.x();
@@ -273,7 +287,7 @@ barycentric_coords_2d(const Vec2f &P, const Vec2f &A, const Vec2f &B, const Vec2
   float d21 = v2x * v1x + v2y * v1y;
   float denom = d00 * d11 - d01 * d01;
   const float eps_denom = 1e-12f;
-  if (std::abs(denom) < eps_denom){
+  if (std::abs(denom) < eps_denom) {
     printf("Barycentric coords 2d: degenerate triangle\n");
     return std::nullopt;
   }
@@ -285,20 +299,23 @@ barycentric_coords_2d(const Vec2f &P, const Vec2f &A, const Vec2f &B, const Vec2
   // rounding: point_to_uv -> uv_to_point round-trip can yield s/w0/t just
   // outside [0,1] (e.g. s=-1e-7, w0=-3e-8); accept within 1e-5.
   const float eps_inside = 1e-5f;
-  if (w0 < -eps_inside || w0 > 1.f + eps_inside || s < -eps_inside || s > 1.f + eps_inside || t < -eps_inside || t > 1.f + eps_inside)
+  if (w0 < -eps_inside || w0 > 1.f + eps_inside || s < -eps_inside ||
+      s > 1.f + eps_inside || t < -eps_inside || t > 1.f + eps_inside)
     return std::nullopt;
 
-  return std::array<float, 3>{w0, s , t};
+  return std::array<float, 3>{w0, s, t};
 }
 
-// Map (u, v) in [0,1]^2 to a 3D point on the mesh surface (mm, same frame as mesh).
-// Finds the first triangle whose UV triangle contains (u,v) and interpolates
-// the 3D position. Returns nullopt if no triangle contains (u,v).
-static std::optional<Vec3d> uv_to_point(const CachedUVMesh &cache, float u, float v) {
+// Map (u, v) in [0,1]^2 to a 3D point on the mesh surface (mm, same frame as
+// mesh). Finds the first triangle whose UV triangle contains (u,v) and
+// interpolates the 3D position. Returns nullopt if no triangle contains (u,v).
+static std::optional<Vec3d> uv_to_point(const CachedUVMesh &cache, float u,
+                                        float v) {
   const indexed_triangle_set &its = cache.mesh.its;
   if (its.vertices.empty() || its.indices.empty() ||
-      cache.uvs.size() != its.indices.size()){
-    printf("UV to point: vertices empty or indices empty or uvs size != indices size: %zu %zu %zu\n",
+      cache.uvs.size() != its.indices.size()) {
+    printf("UV to point: vertices empty or indices empty or uvs size != "
+           "indices size: %zu %zu %zu\n",
            its.vertices.size(), its.indices.size(), cache.uvs.size());
     return std::nullopt;
   }
@@ -337,8 +354,8 @@ point_to_grid_cell(const CachedUVMesh &cache, double x_mm, double y_mm,
     return std::nullopt;
   float u = uv->x(), v = uv->y();
   int i = static_cast<int>(std::floor(u * grid_cols));
-  int j = static_cast<int>(std::floor((v) * grid_rows));
-  
+  int j = static_cast<int>(std::floor((v)*grid_rows));
+
   i = std::clamp(i, 0, grid_cols - 1);
   j = std::clamp(j, 0, grid_rows - 1);
 
@@ -348,8 +365,9 @@ point_to_grid_cell(const CachedUVMesh &cache, double x_mm, double y_mm,
 // Epsilon for "point on grid edge" detection.
 constexpr float UV_GRID_EDGE_EPS = 1e-6f;
 
-// Returns true when (u,v) lies on a vertical grid line u=k/grid_cols, horizontal
-// grid line v=m/grid_rows, or on domain boundary u<=eps, u>=1-eps, v<=eps, v>=1-eps.
+// Returns true when (u,v) lies on a vertical grid line u=k/grid_cols,
+// horizontal grid line v=m/grid_rows, or on domain boundary u<=eps, u>=1-eps,
+// v<=eps, v>=1-eps.
 static bool is_uv_on_grid_edge(float u, float v, int grid_cols, int grid_rows) {
   if (u <= UV_GRID_EDGE_EPS || u >= 1.f - UV_GRID_EDGE_EPS)
     return true;
@@ -365,13 +383,13 @@ static bool is_uv_on_grid_edge(float u, float v, int grid_cols, int grid_rows) {
 }
 
 // Map UV point (u, v) in [0,1]^2 to grid cell (i, j). u=1/v=1 map to last cell.
-// When (u,v) is on a grid edge and (dir_u, dir_v) is non-zero, step by a minimal
-// amount along the direction and use that point's cell to disambiguate.
+// When (u,v) is on a grid edge and (dir_u, dir_v) is non-zero, step by a
+// minimal amount along the direction and use that point's cell to disambiguate.
 // Seam (0 vs 1) is canonicalized in point_to_uv when next point is provided;
 // here we only step to pick the cell the segment actually enters.
 static std::pair<int, int> uv_to_grid_cell(float u, float v, int grid_cols,
-                                            int grid_rows, float dir_u = 0.f,
-                                            float dir_v = 0.f) {
+                                           int grid_rows, float dir_u = 0.f,
+                                           float dir_v = 0.f) {
   constexpr float step_eps = 1e-6f;
   constexpr float dir_eps = 1e-12f;
   bool has_direction = (std::abs(dir_u) > dir_eps || std::abs(dir_v) > dir_eps);
@@ -489,24 +507,23 @@ static void cell_bounds(int i, int j, int grid_cols, int grid_rows,
 // Intersect segment a->b (UV) with a vertical line u = u_edge, segment from
 // (u_edge, v_lo) to (u_edge, v_hi). Returns t in [0,1] if hit, else nullopt. t
 // is parameter for a + t*(b-a).
-static std::optional<float> segment_intersect_vertical(
-  float u_edge, float v_lo,
-  float v_hi,
-  const Vec2f &a,
-  const Vec2f &b) {
+static std::optional<float> segment_intersect_vertical(float u_edge, float v_lo,
+                                                       float v_hi,
+                                                       const Vec2f &a,
+                                                       const Vec2f &b) {
 
   float du = b.x() - a.x();
-  if (std::abs(du) < 1e-9f){
+  if (std::abs(du) < 1e-9f) {
     return std::nullopt;
   }
 
   float t = (u_edge - a.x()) / du;
-  if (t < 0.f || t > 1.f){
+  if (t < 0.f || t > 1.f) {
     return std::nullopt;
   }
 
   float v = a.y() + t * (b.y() - a.y());
-  if (v < v_lo || v > v_hi){
+  if (v < v_lo || v > v_hi) {
     return std::nullopt;
   }
 
@@ -515,11 +532,10 @@ static std::optional<float> segment_intersect_vertical(
 
 // Intersect segment a->b (UV) with a horizontal line v = v_edge, segment from
 // (u_lo, v_edge) to (u_hi, v_edge).
-static std::optional<float> segment_intersect_horizontal(
-  float u_lo, float u_hi,
-  float v_edge,
-  const Vec2f &a,
-  const Vec2f &b) {
+static std::optional<float> segment_intersect_horizontal(float u_lo, float u_hi,
+                                                         float v_edge,
+                                                         const Vec2f &a,
+                                                         const Vec2f &b) {
 
   float dv = b.y() - a.y();
   if (std::abs(dv) < 1e-9f)
@@ -541,7 +557,8 @@ constexpr float UV_EDGE_EPS = 1e-6f;
 // 2=bottom, 3=top (for adjacent cell).
 // When a lies on a cell edge (or corner), we may return (0, edge) so the walk
 // immediately steps to the adjacent cell; the exit edge is chosen using the
-// segment direction (b - a) so we step into the cell the segment is heading toward.
+// segment direction (b - a) so we step into the cell the segment is heading
+// toward.
 static std::pair<float, int> segment_exit_cell(const Vec2f &a, const Vec2f &b,
                                                int ci, int cj, int grid_cols,
                                                int grid_rows) {
@@ -550,23 +567,36 @@ static std::pair<float, int> segment_exit_cell(const Vec2f &a, const Vec2f &b,
   const float du = b.x() - a.x();
   const float dv = b.y() - a.y();
 
-  // If start is on a cell boundary, decide if we should "exit" immediately (t=0)
-  // so the walk doesn't get stuck. Use segment direction: outward normal dot
-  // (du,dv) > 0 means we leave through that edge. Pick the edge we're on that
-  // the segment exits through (at corners, pick the one most aligned with direction).
+  // If start is on a cell boundary, decide if we should "exit" immediately
+  // (t=0) so the walk doesn't get stuck. Use segment direction: outward normal
+  // dot (du,dv) > 0 means we leave through that edge. Pick the edge we're on
+  // that the segment exits through (at corners, pick the one most aligned with
+  // direction).
   {
-    const bool on_left   = (a.x() <= u_min + UV_EDGE_EPS);
-    const bool on_right  = (a.x() >= u_max - UV_EDGE_EPS);
+    const bool on_left = (a.x() <= u_min + UV_EDGE_EPS);
+    const bool on_right = (a.x() >= u_max - UV_EDGE_EPS);
     const bool on_bottom = (a.y() <= v_min + UV_EDGE_EPS);
-    const bool on_top    = (a.y() >= v_max - UV_EDGE_EPS);
+    const bool on_top = (a.y() >= v_max - UV_EDGE_EPS);
     if (on_left || on_right || on_bottom || on_top) {
       // Outward normals: left (-1,0), right (1,0), bottom (0,-1), top (0,1).
       int best_edge = -1;
       float best_dot = 0.f;
-      if (on_left   && -du > best_dot) { best_dot = -du;   best_edge = 0; }
-      if (on_right  &&  du > best_dot) { best_dot =  du;   best_edge = 1; }
-      if (on_bottom && -dv > best_dot) { best_dot = -dv;   best_edge = 2; }
-      if (on_top    &&  dv > best_dot) { best_dot =  dv;   best_edge = 3; }
+      if (on_left && -du > best_dot) {
+        best_dot = -du;
+        best_edge = 0;
+      }
+      if (on_right && du > best_dot) {
+        best_dot = du;
+        best_edge = 1;
+      }
+      if (on_bottom && -dv > best_dot) {
+        best_dot = -dv;
+        best_edge = 2;
+      }
+      if (on_top && dv > best_dot) {
+        best_dot = dv;
+        best_edge = 3;
+      }
       if (best_edge >= 0)
         return {0.f, best_edge};
     }
@@ -576,19 +606,28 @@ static std::pair<float, int> segment_exit_cell(const Vec2f &a, const Vec2f &b,
   // just outside a cell edge (float noise), we'd otherwise "exit" through that
   // edge immediately and the walk can break. Use a small minimum t so we take
   // the real exit (e.g. right edge) instead.
+  // Only consider an edge if the segment is moving toward it (direction of
+  // travel); otherwise we get spurious exits into the wrong column/row (e.g.
+  // segment in column 10 with du<0 exiting "right" into column 11).
   constexpr float t_exit_min = 1e-5f;
+  constexpr float dir_eps = 1e-9f;
   float t_best = 1.f;
   int edge_best = -1;
   auto consider = [&](std::optional<float> t, int edge) {
-    if (t && *t >= t_exit_min && *t < t_best) {
-      t_best = *t;
-      edge_best = edge;
-    }
+    if (!t || *t < t_exit_min || *t >= t_best)
+      return;
+    if (edge == 0 && du >= -dir_eps) return;  // left: only if moving left (du < 0)
+    if (edge == 1 && du <= dir_eps) return;    // right: only if moving right (du > 0)
+    if (edge == 2 && dv >= -dir_eps) return;   // bottom: only if moving down (dv < 0)
+    if (edge == 3 && dv <= dir_eps) return;     // top: only if moving up (dv > 0)
+    t_best = *t;
+    edge_best = edge;
   };
 
-  consider(segment_intersect_vertical(u_min, v_min, v_max, a, b), 0);   // left
-  consider(segment_intersect_vertical(u_max, v_min, v_max, a, b), 1);   // right
-  consider(segment_intersect_horizontal(u_min, u_max, v_min, a, b), 2); // bottom
+  consider(segment_intersect_vertical(u_min, v_min, v_max, a, b), 0); // left
+  consider(segment_intersect_vertical(u_max, v_min, v_max, a, b), 1); // right
+  consider(segment_intersect_horizontal(u_min, u_max, v_min, a, b),
+           2); // bottom
   consider(segment_intersect_horizontal(u_min, u_max, v_max, a, b), 3); // top
 
   if (edge_best < 0)
@@ -610,7 +649,7 @@ static std::pair<int, int> adjacent_cell(int ci, int cj, int edge,
     nj = cj - 1;
   else if (edge == 3)
     nj = cj + 1;
-  
+
   ni = std::clamp(ni, 0, grid_cols - 1);
   nj = std::clamp(nj, 0, grid_rows - 1);
 
@@ -620,8 +659,8 @@ static std::pair<int, int> adjacent_cell(int ci, int cj, int edge,
 // Adjacent cell clamped to a segment's min/max cell range (so the walk stays
 // within the bounding box of the two endpoint cells).
 static std::pair<int, int> adjacent_cell_bounded(int ci, int cj, int edge,
-                                                  int min_ci, int max_ci,
-                                                  int min_cj, int max_cj) {
+                                                 int min_ci, int max_ci,
+                                                 int min_cj, int max_cj) {
   int ni = ci, nj = cj;
   if (edge == 0)
     ni = ci - 1;
@@ -646,8 +685,9 @@ struct UVSegmentInCell {
 
 // Subdivide UV segment a->b into segments per grid cell. Each returned segment
 // is the portion of the line inside one cell, in order along the line.
-static std::vector<UVSegmentInCell> subdivide_uv_segment_by_grid(
-    const Vec2f &a, const Vec2f &b, int grid_cols, int grid_rows) {
+static std::vector<UVSegmentInCell>
+subdivide_uv_segment_by_grid(const Vec2f &a, const Vec2f &b, int grid_cols,
+                             int grid_rows) {
   std::vector<UVSegmentInCell> out;
   float du = b.x() - a.x(), dv = b.y() - a.y();
   auto [ci, cj] = uv_to_grid_cell(a.x(), a.y(), grid_cols, grid_rows, du, dv);
@@ -656,14 +696,55 @@ static std::vector<UVSegmentInCell> subdivide_uv_segment_by_grid(
   const int max_ci = std::max(ci, bi);
   const int min_cj = std::min(cj, bj);
   const int max_cj = std::max(cj, bj);
-  Vec2f current_uv = a;
+
+  // Clamp endpoints so the walk stays in the intended cell range. When the two
+  // endpoints disagree on column (or row) due to float on the boundary (e.g.
+  // u=11/12 → cell 11 vs 10), restrict to the midpoint's column (row) so we
+  // don't step into the wrong cell.
+  constexpr float uv_inset = 1e-6f;
+  int clamp_ci_min = min_ci, clamp_ci_max = max_ci;
+  int clamp_cj_min = min_cj, clamp_cj_max = max_cj;
+  // When endpoints disagree on column (e.g. one in 10, one in 11 due to u=11/12),
+  // restrict to the midpoint's column only so we don't step into the wrong column.
+  // Do not restrict row to midpoint or a vertical segment would collapse to one cell.
+  if (min_ci != max_ci) {
+    const float mid_u = 0.5f * (a.x() + b.x());
+    const float mid_v = 0.5f * (a.y() + b.y());
+    const float mid_du = b.x() - a.x();
+    const float mid_dv = b.y() - a.y();
+    auto [mid_ci, mid_cj] =
+        uv_to_grid_cell(mid_u, mid_v, grid_cols, grid_rows, mid_du, mid_dv);
+    clamp_ci_min = clamp_ci_max = mid_ci;
+  }
+  const float u_lo = float(clamp_ci_min) / float(grid_cols) + uv_inset;
+  const float u_hi = float(clamp_ci_max + 1) / float(grid_cols) - uv_inset;
+  const float v_lo = float(clamp_cj_min) / float(grid_rows) + uv_inset;
+  const float v_hi = float(clamp_cj_max + 1) / float(grid_rows) - uv_inset;
+  const Vec2f a_clamped(std::clamp(a.x(), u_lo, u_hi), std::clamp(a.y(), v_lo, v_hi));
+  const Vec2f b_clamped(std::clamp(b.x(), u_lo, u_hi), std::clamp(b.y(), v_lo, v_hi));
+
+  du = b_clamped.x() - a_clamped.x();
+  dv = b_clamped.y() - a_clamped.y();
+  Vec2f current_uv = a_clamped;
   constexpr float t_done_eps = 1e-6f;
+
+  // Walk uses the clamp range so we never step into a column/row that was
+  // excluded by midpoint disambiguation.
+  const int walk_min_ci = clamp_ci_min;
+  const int walk_max_ci = clamp_ci_max;
+  const int walk_min_cj = clamp_cj_min;
+  const int walk_max_cj = clamp_cj_max;
+
+  // Start cell from clamped point so we're in the correct cell after clamping.
+  auto start_cell = uv_to_grid_cell(a_clamped.x(), a_clamped.y(), grid_cols, grid_rows, du, dv);
+  ci = std::clamp(start_cell.first, walk_min_ci, walk_max_ci);
+  cj = std::clamp(start_cell.second, walk_min_cj, walk_max_cj);
 
   for (;;) {
     auto [t, exit_edge] =
-        segment_exit_cell(current_uv, b, ci, cj, grid_cols, grid_rows);
-    const float end_u = current_uv.x() + t * (b.x() - current_uv.x());
-    const float end_v = current_uv.y() + t * (b.y() - current_uv.y());
+        segment_exit_cell(current_uv, b_clamped, ci, cj, grid_cols, grid_rows);
+    const float end_u = current_uv.x() + t * (b_clamped.x() - current_uv.x());
+    const float end_v = current_uv.y() + t * (b_clamped.y() - current_uv.y());
     Vec2f end_uv(end_u, end_v);
     out.push_back({current_uv, end_uv, ci, cj});
 
@@ -671,12 +752,69 @@ static std::vector<UVSegmentInCell> subdivide_uv_segment_by_grid(
       break;
 
     current_uv = end_uv;
-    auto next =
-        adjacent_cell_bounded(ci, cj, exit_edge, min_ci, max_ci, min_cj, max_cj);
+    auto next = adjacent_cell_bounded(ci, cj, exit_edge, walk_min_ci, walk_max_ci,
+                                      walk_min_cj, walk_max_cj);
     if (next.first == ci && next.second == cj)
       break;
     ci = next.first;
     cj = next.second;
+  }
+  return out;
+}
+
+// V2: intersect segment with all grid lines in UV [0,1]^2, sort t, one segment
+// per interval; cell from midpoint. No cell walk or boundary disambiguation.
+static std::vector<UVSegmentInCell>
+subdivide_uv_segment_by_grid_v2(const Vec2f &a, const Vec2f &b, int grid_cols,
+                                int grid_rows) {
+  const float du = b.x() - a.x();
+  const float dv = b.y() - a.y();
+  std::vector<float> t_vals;
+  t_vals.push_back(0.f);
+  t_vals.push_back(1.f);
+
+  // Vertical grid lines u = i/grid_cols for i = 1..grid_cols-1
+  for (int i = 1; i < grid_cols; ++i) {
+    float u_edge = float(i) / float(grid_cols);
+    auto t_opt = segment_intersect_vertical(u_edge, 0.f, 1.f, a, b);
+    if (t_opt && *t_opt > 1e-6f && *t_opt < 1.f - 1e-6f)
+      t_vals.push_back(*t_opt);
+  }
+  // Horizontal grid lines v = j/grid_rows for j = 1..grid_rows-1
+  for (int j = 1; j < grid_rows; ++j) {
+    float v_edge = float(j) / float(grid_rows);
+    auto t_opt = segment_intersect_horizontal(0.f, 1.f, v_edge, a, b);
+    if (t_opt && *t_opt > 1e-6f && *t_opt < 1.f - 1e-6f)
+      t_vals.push_back(*t_opt);
+  }
+
+  std::sort(t_vals.begin(), t_vals.end());
+  // Merge near-duplicate t (e.g. segment through grid corner)
+  std::vector<float> t_merged;
+  constexpr float t_eps = 1e-6f;
+  for (float t : t_vals) {
+    if (t_merged.empty() || t > t_merged.back() + t_eps)
+      t_merged.push_back(t);
+  }
+
+  printf("t_merged: %zu\n", t_merged.size());
+  for (float t : t_merged) {
+    printf("t: %f\n", t);
+  }
+
+  std::vector<UVSegmentInCell> out;
+  for (size_t i = 0; i + 1 < t_merged.size(); ++i) {
+    float t0 = t_merged[i];
+    float t1 = t_merged[i + 1];
+    float u0 = a.x() + t0 * du;
+    float v0 = a.y() + t0 * dv;
+    float u1 = a.x() + t1 * du;
+    float v1 = a.y() + t1 * dv;
+    float mid_t = 0.5f * (t0 + t1);
+    float mid_u = a.x() + mid_t * du;
+    float mid_v = a.y() + mid_t * dv;
+    auto [ci, cj] = uv_to_grid_cell(mid_u, mid_v, grid_cols, grid_rows, du, dv);
+    out.push_back({{u0, v0}, {u1, v1}, ci, cj});
   }
   return out;
 }
@@ -698,61 +836,74 @@ extract_black_contour_segments(const Polygon &contour, double z_mm,
   std::vector<std::pair<Point, Point>> segments;
 
   for (size_t k = 0; k < n; ++k) {
-    const Point A_xy = point_to_model_surface_mm(cache, contour.points[k], outward_offset_mm);
-    const Point B_xy = point_to_model_surface_mm(cache, contour.points[(k + 1) % n], outward_offset_mm);
+    const Point A_xy =
+        point_to_model_surface_mm(cache, contour.points[k], outward_offset_mm);
+    const Point B_xy = point_to_model_surface_mm(
+        cache, contour.points[(k + 1) % n], outward_offset_mm);
     double ax_mm = A_xy.x();
     double ay_mm = A_xy.y();
     double bx_mm = B_xy.x();
     double by_mm = B_xy.y();
-    
-    auto A_uv = point_to_uv(cache, ax_mm, ay_mm, z_mm, Vec3d(bx_mm, by_mm, z_mm));
-    auto B_uv = point_to_uv(cache, bx_mm, by_mm, z_mm, Vec3d(ax_mm, ay_mm, z_mm));
-    if (!A_uv || !B_uv){
+
+    auto A_uv =
+        point_to_uv(cache, ax_mm, ay_mm, z_mm, Vec3d(bx_mm, by_mm, z_mm));
+    auto B_uv =
+        point_to_uv(cache, bx_mm, by_mm, z_mm, Vec3d(ax_mm, ay_mm, z_mm));
+    if (!A_uv || !B_uv) {
       printf("No UV hit\n");
       continue;
     }
 
     float du = B_uv->x() - A_uv->x(), dv = B_uv->y() - A_uv->y();
-    auto cell_A = uv_to_grid_cell(A_uv->x(), A_uv->y(), grid_cols, grid_rows, du, dv);
-    auto cell_B = uv_to_grid_cell(B_uv->x(), B_uv->y(), grid_cols, grid_rows, -du, -dv);
+    auto cell_A =
+        uv_to_grid_cell(A_uv->x(), A_uv->y(), grid_cols, grid_rows, du, dv);
+    auto cell_B =
+        uv_to_grid_cell(B_uv->x(), B_uv->y(), grid_cols, grid_rows, -du, -dv);
     const int min_ci = std::min(cell_A.first, cell_B.first);
     const int max_ci = std::max(cell_A.first, cell_B.first);
     const int min_cj = std::min(cell_A.second, cell_B.second);
     const int max_cj = std::max(cell_A.second, cell_B.second);
 
-    printf("A xy: %d, %d, B xy: %d, %d\n", A_xy.x(), A_xy.y(), B_xy.x(), B_xy.y());
-    printf("A cell: %d, %d, B cell: %d, %d\n", cell_A.first, cell_A.second, cell_B.first, cell_B.second);
+    printf("A xy: %d, %d, B xy: %d, %d\n", A_xy.x(), A_xy.y(), B_xy.x(),
+           B_xy.y());
+    printf("A cell: %d, %d, B cell: %d, %d\n", cell_A.first, cell_A.second,
+           cell_B.first, cell_B.second);
 
     int ci = cell_A.first, cj = cell_A.second;
 
     Vec2f current_uv = *A_uv;
     Point current_xy = A_xy;
-    
-    for (;;) {
-      auto [t, exit_edge] = segment_exit_cell(current_uv, *B_uv, ci, cj, grid_cols, grid_rows);
 
-      //printf("Exit edge: %d, t: %f\n", exit_edge, t);
+    for (;;) {
+      auto [t, exit_edge] =
+          segment_exit_cell(current_uv, *B_uv, ci, cj, grid_cols, grid_rows);
+
+      // printf("Exit edge: %d, t: %f\n", exit_edge, t);
 
       const double end_uv_x = double(current_uv.x()) +
-                           t * (double(B_uv->x()) - double(current_uv.x()));
+                              t * (double(B_uv->x()) - double(current_uv.x()));
       const double end_uv_y = double(current_uv.y()) +
-                           t * (double(B_uv->y()) - double(current_uv.y()));
+                              t * (double(B_uv->y()) - double(current_uv.y()));
 
-      //printf("End uv: %f, %f\n", end_uv_x, end_uv_y);
+      // printf("End uv: %f, %f\n", end_uv_x, end_uv_y);
 
       auto uv_to_point_opt = uv_to_point(cache, end_uv_x, end_uv_y);
       if (!uv_to_point_opt) {
         printf("No UV to point hit\n");
-        continue;
+        break;
       }
 
-      //printf("UV to point: x: %f, y: %f, z: %f\n", uv_to_point_opt->x(), uv_to_point_opt->y(), uv_to_point_opt->z());
+      // printf("UV to point: x: %f, y: %f, z: %f\n", uv_to_point_opt->x(),
+      // uv_to_point_opt->y(), uv_to_point_opt->z());
       Point end_xy = Point(uv_to_point_opt->x(), uv_to_point_opt->y());
 
-      if (t > 1e-9f && is_black_cell(ci, cj)){
-        printf("Adding segment: %d, %d -> %d, %d\n", current_xy.x(), current_xy.y(), end_xy.x(), end_xy.y());
-        Point start_point = point_mm_to_model_surface(cache, current_xy.x(), current_xy.y(), outward_offset_mm);
-        Point end_point = point_mm_to_model_surface(cache, end_xy.x(), end_xy.y(), outward_offset_mm);
+      if (t > 1e-9f && is_black_cell(ci, cj)) {
+        printf("Adding segment: %d, %d -> %d, %d\n", current_xy.x(),
+               current_xy.y(), end_xy.x(), end_xy.y());
+        Point start_point = point_mm_to_model_surface(
+            cache, current_xy.x(), current_xy.y(), outward_offset_mm);
+        Point end_point = point_mm_to_model_surface(
+            cache, end_xy.x(), end_xy.y(), outward_offset_mm);
         segments.push_back({start_point, end_point});
       }
 
@@ -764,7 +915,8 @@ extract_black_contour_segments(const Polygon &contour, double z_mm,
                          current_uv.y() + t * (B_uv->y() - current_uv.y()));
 
       if (exit_edge >= 0) {
-        auto next = adjacent_cell_bounded(ci, cj, exit_edge, min_ci, max_ci, min_cj, max_cj);
+        auto next = adjacent_cell_bounded(ci, cj, exit_edge, min_ci, max_ci,
+                                          min_cj, max_cj);
         if (next.first == ci && next.second == cj)
           break;
         ci = next.first;
@@ -773,16 +925,7 @@ extract_black_contour_segments(const Polygon &contour, double z_mm,
     }
   }
 
-  printf("Segments: %zu\n", segments.size());
-  for (const auto &segment : segments) {
-    std::cout << "Segment: " << segment.first.x() << ", " << segment.first.y() << " -> " << segment.second.x() << ", " << segment.second.y() << std::endl;
-    Polyline pl;
-    pl.points.push_back(segment.first);
-    pl.points.push_back(segment.second);
-    result.push_back(pl);
-  }
-
-  //Merge consecutive segments that share an endpoint into polylines.
+  // Merge consecutive segments that share an endpoint into polylines.
   const coord_t eps2 = scale_(0.001) * scale_(0.001);
   auto same_point = [eps2](const Point &a, const Point &b) {
     Vec2d d = (a - b).cast<double>();
@@ -825,6 +968,7 @@ extract_black_contour_segments(const Polygon &contour, double z_mm,
     if (pl.points.size() >= 2)
       result.push_back(std::move(pl));
   }
+  result = chain_polylines(std::move(result));
   return result;
 }
 
@@ -905,71 +1049,141 @@ void FillCheckered::_fill_surface_single(
   Polygon outer_contour = expolygon.contour;
   double z_mm = this->z;
 
-  //if(size_t(this->layer_id) == 158) {
-    std::shared_ptr<CachedUVMesh> cache =
-        get_or_load_uv_mesh(m_uv_map_file_path);
+  // if(size_t(this->layer_id) == 158) {
+  std::shared_ptr<CachedUVMesh> cache = get_or_load_uv_mesh(m_uv_map_file_path);
 
-    if (cache && cache->valid) {
-      printf("Thickness %i", thickness_layers);
+  if (cache && cache->valid) {
+    // printf("Thickness %i \n", thickness_layers);
 
-      const double outward_offset_mm =
-          std::max(0., 0.5 * this->spacing - this->overlap);
-      double ox = m_contour_to_mesh_origin_mm.x();
-      double oy = m_contour_to_mesh_origin_mm.y();
+    const double outward_offset_mm =
+        std::max(0., 0.5 * this->spacing - this->overlap);
+    double ox = m_contour_to_mesh_origin_mm.x();
+    double oy = m_contour_to_mesh_origin_mm.y();
 
-      printf("Origin %f, %f \n", ox, oy);
-      printf("Outward Offset %f \n", outward_offset_mm);
+    // printf("Origin %f, %f \n", ox, oy);
+    // printf("Outward Offset %f \n", outward_offset_mm);
 
-      printf("Bbox min: %f, %f\n", cache->bbox_min.x(), cache->bbox_min.y());
-      printf("Bbox max: %f, %f\n", cache->bbox_max.x(), cache->bbox_max.y());
+    // printf("Bbox min: %f, %f\n", cache->bbox_min.x(), cache->bbox_min.y());
+    // printf("Bbox max: %f, %f\n", cache->bbox_max.x(), cache->bbox_max.y());
 
-      // calcule the center of the bbox
-      double bbox_center_x = (cache->bbox_min.x() + cache->bbox_max.x()) / 2;
-      double bbox_center_y = (cache->bbox_min.y() + cache->bbox_max.y()) / 2;
-      printf("Bbox center: %f, %f\n", bbox_center_x, bbox_center_y);
+    // calcule the center of the bbox
+    double bbox_center_x = (cache->bbox_min.x() + cache->bbox_max.x()) / 2;
+    double bbox_center_y = (cache->bbox_min.y() + cache->bbox_max.y()) / 2;
+    // printf("Bbox center: %f, %f\n", bbox_center_x, bbox_center_y);
 
-      polylines_out = extract_black_contour_segments(
-          outer_contour, z_mm, *cache, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS, ox,
-          oy, outward_offset_mm);
+    // polylines_out = extract_black_contour_segments(
+    //     outer_contour, z_mm, *cache, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS,
+    //     ox, oy, outward_offset_mm);
 
-      printf("Polylines out: %zu\n", polylines_out.size());
-      for (const Polyline &pl : polylines_out) {
-        for (const Point &p : pl.points) {
-          //std::cout << "Point: " << p.x() << ", " << p.y() << std::endl;
-        }
+    // printf("Polylines out: %zu\n", polylines_out.size());
+    // for (const Polyline &pl : polylines_out) {
+    //   for (const Point &p : pl.points) {
+    //     //std::cout << "Point: " << p.x() << ", " << p.y() << std::endl;
+    //   }
+    // }
+
+    if (size_t(this->layer_id) == 1) {
+      printf("Outer contour points: %zu\n", outer_contour.points.size());
+      printf("layer id: %zu\n", this->layer_id);
+
+      for (const Point &p : outer_contour.points) {
+        Point p_mm = point_to_model_surface_mm(*cache, p, outward_offset_mm);
+        printf("p_mm: %d, %d\n", p_mm.x(), p_mm.y());
+        auto uv = point_to_uv(*cache, p_mm.x(), p_mm.y(), 20);
+        printf("UV: %f, %f\n", uv->x(), uv->y());
+        auto grid_cell = uv_to_grid_cell(uv->x(), uv->y(), DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS);
+        printf("Grid cell: %d, %d\n", grid_cell.first, grid_cell.second);
+        auto cell_number = ((DEFAULT_GRID_ROWS - grid_cell.second - 1) * DEFAULT_GRID_ROWS) + grid_cell.first;
+        printf("Cell number: %d\n", cell_number);
       }
+      
+      Point A_xy = Point(40, 20);
+      Point B_xy = Point(0, 20);
+      auto z_mm = 20;
+
+      double ax_mm = A_xy.x();
+      double ay_mm = A_xy.y();
+      double bx_mm = B_xy.x();
+      double by_mm = B_xy.y();
+
+      printf("A xy: %f, %f, B xy: %f, %f\n", ax_mm, ay_mm, bx_mm, by_mm);
+
+      auto A_uv =
+          point_to_uv(*cache, ax_mm, ay_mm, z_mm, Vec3d(bx_mm, by_mm, z_mm));
+      auto B_uv =
+          point_to_uv(*cache, bx_mm, by_mm, z_mm, Vec3d(ax_mm, ay_mm, z_mm));
+      if (!A_uv || !B_uv) {
+        printf("No UV hit\n");
+        return;
+      }
+
+      printf("A uv: %f, %f, B uv: %f, %f\n", A_uv->x(), A_uv->y(), B_uv->x(),
+             B_uv->y());
+
+      auto segments = subdivide_uv_segment_by_grid_v2(
+          *A_uv, *B_uv, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS);
+      // Sort by grid number (ascending) so printed cells are sequential.
+      auto grid_number_for = [](const UVSegmentInCell &s) {
+        return (DEFAULT_GRID_ROWS - 1 - s.cj) * DEFAULT_GRID_ROWS + s.ci;
+      };
+      std::vector<UVSegmentInCell> segments_by_cell(segments.begin(),
+                                                    segments.end());
+
+      for (const auto &segment : segments_by_cell) {
+        auto grid_number = grid_number_for(segment);
+        printf("Segment: %f, %f -> %f, %f in cell %i\n", segment.start_uv.x(),
+               segment.start_uv.y(), segment.end_uv.x(), segment.end_uv.y(),
+               grid_number);
+      }
+
+      printf("Segments: %zu\n", segments.size());
 
       // size_t n = outer_contour.points.size();
       // if (n == 0)
       //   return;
 
       // for (size_t k = 0; k < n; ++k) {
-      //   const Point A_xy = point_to_model_surface_mm(*cache, outer_contour.points[k], outward_offset_mm);
-      //   const Point B_xy = point_to_model_surface_mm(*cache, outer_contour.points[(k + 1) % n], outward_offset_mm);
+      //   const Point A_xy = point_to_model_surface_mm(
+      //       *cache, outer_contour.points[k], outward_offset_mm);
+      //   const Point B_xy = point_to_model_surface_mm(
+      //       *cache, outer_contour.points[(k + 1) % n], outward_offset_mm);
       //   double ax_mm = A_xy.x();
       //   double ay_mm = A_xy.y();
       //   double bx_mm = B_xy.x();
       //   double by_mm = B_xy.y();
-        
-      //   auto A_uv = point_to_uv(*cache, ax_mm, ay_mm, z_mm, Vec3d(bx_mm, by_mm, z_mm));
-      //   auto B_uv = point_to_uv(*cache, bx_mm, by_mm, z_mm, Vec3d(ax_mm, ay_mm, z_mm));
-      //   if (!A_uv || !B_uv){
+
+      //   printf("A xy: %f, %f, B xy: %f, %f\n", ax_mm, ay_mm, bx_mm, by_mm);
+
+      //   auto A_uv =
+      //       point_to_uv(*cache, ax_mm, ay_mm, z_mm, Vec3d(bx_mm, by_mm,
+      //       z_mm));
+      //   auto B_uv =
+      //       point_to_uv(*cache, bx_mm, by_mm, z_mm, Vec3d(ax_mm, ay_mm,
+      //       z_mm));
+      //   if (!A_uv || !B_uv) {
       //     printf("No UV hit\n");
       //     continue;
       //   }
 
-      //   printf("A uv: %f, %f, B uv: %f, %f\n", A_uv->x(), A_uv->y(), B_uv->x(), B_uv->y());
+      //   printf("A uv: %f, %f, B uv: %f, %f\n", A_uv->x(), A_uv->y(),
+      //   B_uv->x(),
+      //          B_uv->y());
 
-      //   auto segments = subdivide_uv_segment_by_grid(*A_uv, *B_uv, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS);
+      //   auto segments = subdivide_uv_segment_by_grid(
+      //       *A_uv, *B_uv, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS);
       //   for (const auto &segment : segments) {
-      //     printf("Segment: %f, %f -> %f, %f in cell %d, %d\n", segment.start_uv.x(), segment.start_uv.y(), segment.end_uv.x(), segment.end_uv.y(), segment.ci, segment.cj);
+      //     auto grid_number = (DEFAULT_GRID_ROWS - segment.cj) *
+      //     DEFAULT_GRID_ROWS + segment.ci; printf("Segment: %f, %f -> %f, %f
+      //     in cell %i\n",
+      //            segment.start_uv.x(), segment.start_uv.y(),
+      //            segment.end_uv.x(), segment.end_uv.y(), grid_number);
       //   }
 
       //   printf("Segments: %zu\n", segments.size());
       // }
-
     }
-  // }else{
+  }
+  // } else {
   //   polylines_out.push_back(Polyline({Point(0, 0), Point(10, 10)}));
   // }
 }
