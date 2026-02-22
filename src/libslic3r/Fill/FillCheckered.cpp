@@ -1315,11 +1315,13 @@ subdivide_uv_segment_by_grid(const Vec2f &a, const Vec2f &b, int grid_cols,
   constexpr float uv_inset = 1e-6f;
   int clamp_ci_min = min_ci, clamp_ci_max = max_ci;
   int clamp_cj_min = min_cj, clamp_cj_max = max_cj;
-  // When endpoints disagree on column (e.g. one in 10, one in 11 due to
-  // u=11/12), restrict to the midpoint's column only so we don't step into the
-  // wrong column. Do not restrict row to midpoint or a vertical segment would
-  // collapse to one cell.
-  if (min_ci != max_ci) {
+  // When endpoints disagree on column due to float boundary ambiguity (e.g.
+  // vertical UV segment with u=11/12, one endpoint rounds to cell 10, one to
+  // 11), restrict to the midpoint's column. Only do this when the segment is
+  // nearly vertical in UV (|du| tiny) so we don't collapse segments that
+  // genuinely span multiple columns.
+  constexpr float du_ambiguity_eps = 1e-6f;
+  if (min_ci != max_ci && std::abs(b.x() - a.x()) < du_ambiguity_eps) {
     const float mid_u = 0.5f * (a.x() + b.x());
     const float mid_v = 0.5f * (a.y() + b.y());
     const float mid_du = b.x() - a.x();
@@ -1653,7 +1655,8 @@ void FillCheckered::_fill_surface_single(
     const double ox = m_contour_to_mesh_origin_mm.x();
     const double oy = m_contour_to_mesh_origin_mm.y();
 
-    if (size_t(this->layer_id) != -10) {
+    if (size_t(this->layer_id) == 50) {
+      printf("z mm: %f\n", z_mm);
 
       // for (size_t i = 0; i < outer_contour.points.size(); ++i) {
       //   z_mm = 20.0;
@@ -1678,7 +1681,7 @@ void FillCheckered::_fill_surface_single(
       double ay_mm = double(a.y());
       double bx_mm = double(b.x());
       double by_mm = double(b.y());
-      // double z_mm = 20.0;
+      // double z_mm = 10.200000;
 
       std::vector<SubSegmentWithFaces> sub_segments =
           split_contour_segment_by_faces(*cache, ax_mm, ay_mm, bx_mm, by_mm,
@@ -1705,6 +1708,9 @@ void FillCheckered::_fill_surface_single(
         std::vector<UVSegmentInCell> cell_segments =
             subdivide_uv_segment_by_grid(*A_uv, *B_uv, DEFAULT_GRID_COLS,
                                          DEFAULT_GRID_ROWS);
+
+
+        printf("Cell segments: %zu\n", cell_segments.size());
         for (const UVSegmentInCell &seg : cell_segments) {
           auto grid_number =
               (DEFAULT_GRID_COLS - seg.cj - 1) * DEFAULT_GRID_ROWS + seg.ci;
@@ -1719,20 +1725,20 @@ void FillCheckered::_fill_surface_single(
       //   printf("Face: %zu\n", face);
       // }
 
-      printf("Extracting black contour segments for layer %zu\n",
-             this->layer_id);
-      polylines_out = extract_black_contour_segments(
-          outer_contour, z_mm, *cache, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS, ox,
-          oy, outward_offset_mm);
-      printf("Polylines: %zu\n", polylines_out.size());
-      for (const auto &polyline : polylines_out) {
-        printf("Polyline: %zu\n", polyline.points.size());
-        for (const auto &point : polyline.points) {
-          auto point_mm =
-              point_to_model_surface_mm(*cache, point, outward_offset_mm);
-          printf("Point: %d, %d\n", point.x(), point.y());
-        }
-      }
+      // printf("Extracting black contour segments for layer %zu\n",
+      //        this->layer_id);
+      // polylines_out = extract_black_contour_segments(
+      //     outer_contour, z_mm, *cache, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS, ox,
+      //     oy, outward_offset_mm);
+      // printf("Polylines: %zu\n", polylines_out.size());
+      // for (const auto &polyline : polylines_out) {
+      //   printf("Polyline: %zu\n", polyline.points.size());
+      //   for (const auto &point : polyline.points) {
+      //     auto point_mm =
+      //         point_to_model_surface_mm(*cache, point, outward_offset_mm);
+      //     printf("Point: %d, %d\n", point_mm.x(), point_mm.y());
+      //   }
+      // }
     }
   }
 }
