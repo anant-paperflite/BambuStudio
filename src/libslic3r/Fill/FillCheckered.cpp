@@ -1653,7 +1653,7 @@ void FillCheckered::_fill_surface_single(
     const double ox = m_contour_to_mesh_origin_mm.x();
     const double oy = m_contour_to_mesh_origin_mm.y();
 
-    if (size_t(this->layer_id) == 10) {
+    if (size_t(this->layer_id) != -10) {
 
       // for (size_t i = 0; i < outer_contour.points.size(); ++i) {
       //   z_mm = 20.0;
@@ -1671,14 +1671,14 @@ void FillCheckered::_fill_surface_single(
       //   }
       // }
 
-      Point a = Point(40.0, 20.0);
-      Point b = Point(0.0, 20.0);
+      Point a = Point(40.0, 0.0);
+      Point b = Point(40.0, 20.0);
 
       double ax_mm = double(a.x());
       double ay_mm = double(a.y());
       double bx_mm = double(b.x());
       double by_mm = double(b.y());
-      double z_mm = 20.0;
+      // double z_mm = 20.0;
 
       std::vector<SubSegmentWithFaces> sub_segments =
           split_contour_segment_by_faces(*cache, ax_mm, ay_mm, bx_mm, by_mm,
@@ -1719,10 +1719,20 @@ void FillCheckered::_fill_surface_single(
       //   printf("Face: %zu\n", face);
       // }
 
-      // printf("Extracting black contour segments for layer %zu\n",
-      // this->layer_id); polylines_out = extract_black_contour_segments(
-      //   outer_contour, z_mm, *cache, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS,
-      //   ox, oy, outward_offset_mm);
+      printf("Extracting black contour segments for layer %zu\n",
+             this->layer_id);
+      polylines_out = extract_black_contour_segments(
+          outer_contour, z_mm, *cache, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS, ox,
+          oy, outward_offset_mm);
+      printf("Polylines: %zu\n", polylines_out.size());
+      for (const auto &polyline : polylines_out) {
+        printf("Polyline: %zu\n", polyline.points.size());
+        for (const auto &point : polyline.points) {
+          auto point_mm =
+              point_to_model_surface_mm(*cache, point, outward_offset_mm);
+          printf("Point: %d, %d\n", point.x(), point.y());
+        }
+      }
     }
   }
 }
