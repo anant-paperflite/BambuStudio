@@ -12,8 +12,8 @@
 #include <array>
 #include <chrono>
 #include <cmath>
-#include <fstream>
 #include <cstdio>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -22,36 +22,19 @@
 #include <sstream>
 #include <string>
 
-// #region agent log
-static void debug_log_pt2uv(const char *label, double x_mm, double y_mm, double z_mm,
-                            double best_sqr_dist, int ret_null, size_t restrict_sz) {
-  std::ofstream f("/Users/anant/Documents/Personal/BambuStudio/.cursor/debug-60a69c.log",
-                  std::ios::app);
-  if (f)
-    f << "{\"hyp\":\"pt2uv\",\"label\":\"" << label << "\",\"x\":" << x_mm << ",\"y\":" << y_mm
-      << ",\"z\":" << z_mm << ",\"best_sqr_dist\":" << best_sqr_dist << ",\"ret_null\":" << ret_null
-      << ",\"restrict_sz\":" << restrict_sz << "}\n";
-}
-static void debug_log_extract(int k, double pa_x, double pa_y, double pb_x, double pb_y,
-                              double ax, double ay, double bx, double by, double ox, double oy) {
-  std::ofstream f("/Users/anant/Documents/Personal/BambuStudio/.cursor/debug-60a69c.log",
-                  std::ios::app);
-  if (f)
-    f << "{\"hyp\":\"extract\",\"k\":" << k << ",\"pa_x\":" << pa_x << ",\"pa_y\":" << pa_y
-      << ",\"pb_x\":" << pb_x << ",\"pb_y\":" << pb_y << ",\"ax\":" << ax << ",\"ay\":" << ay
-      << ",\"bx\":" << bx << ",\"by\":" << by << ",\"ox\":" << ox << ",\"oy\":" << oy << "}\n";
-}
-// #endregion
-
 // Enable to write debug SVGs (XY segments and UV-space segments) to
 // g_data_dir/SVG/
 #define CHECKERED_INFILL_DEBUG_SVG
+
+// Enable to print faces, vertices (mm), UV islands, and per-island grid spans
+#define CHECKERED_INFILL_DEBUG_PRINT
 
 namespace Slic3r {
 
 namespace {
 
-// Default grid resolution for UV space [0,1]^2 (12 cells per row/column, indices 0..11).
+// Default grid resolution for UV space [0,1]^2 (12 cells per row/column,
+// indices 0..11).
 constexpr int DEFAULT_GRID_COLS = 12;
 constexpr int DEFAULT_GRID_ROWS = 12;
 
@@ -63,7 +46,8 @@ struct CachedUVMesh {
   Vec3f bbox_min{0.f, 0.f, 0.f};
   Vec3f bbox_max{0.f, 0.f, 0.f};
 
-  // UV island data: face_idx -> island_id; island_id -> face indices; per-island UV bounds.
+  // UV island data: face_idx -> island_id; island_id -> face indices;
+  // per-island UV bounds.
   std::vector<int> face_to_island;
   std::vector<std::vector<size_t>> island_faces;
   std::vector<std::array<float, 4>> island_uv_bounds;
@@ -78,9 +62,12 @@ struct CachedUVMesh {
 
     // Fold UV to [0,1] for island continuity check (seams at 0/1 disconnect).
     auto fold_uv = [](float t) {
-      if (t > 1.f && t <= 2.f) return 2.f - t;
-      if (t > 2.f) return t - std::floor(t);
-      if (t < 0.f) return t - std::floor(t);
+      if (t > 1.f && t <= 2.f)
+        return 2.f - t;
+      if (t > 2.f)
+        return t - std::floor(t);
+      if (t < 0.f)
+        return t - std::floor(t);
       return t;
     };
 
@@ -129,14 +116,18 @@ struct CachedUVMesh {
           continue;
 
         float ua0 = fold_uv(uv_a[e].x()), va0 = fold_uv(uv_a[e].y());
-        float ua1 = fold_uv(uv_a[(e + 1) % 3].x()), va1 = fold_uv(uv_a[(e + 1) % 3].y());
+        float ua1 = fold_uv(uv_a[(e + 1) % 3].x()),
+              va1 = fold_uv(uv_a[(e + 1) % 3].y());
         float ub0 = fold_uv(uv_b[eb].x()), vb0 = fold_uv(uv_b[eb].y());
-        float ub1 = fold_uv(uv_b[(eb + 1) % 3].x()), vb1 = fold_uv(uv_b[(eb + 1) % 3].y());
+        float ub1 = fold_uv(uv_b[(eb + 1) % 3].x()),
+              vb1 = fold_uv(uv_b[(eb + 1) % 3].y());
 
-        bool match0 = (std::abs(ua0 - ub0) < uv_eps && std::abs(va0 - vb0) < uv_eps) ||
-                     (std::abs(ua0 - ub1) < uv_eps && std::abs(va0 - vb1) < uv_eps);
-        bool match1 = (std::abs(ua1 - ub0) < uv_eps && std::abs(va1 - vb0) < uv_eps) ||
-                     (std::abs(ua1 - ub1) < uv_eps && std::abs(va1 - vb1) < uv_eps);
+        bool match0 =
+            (std::abs(ua0 - ub0) < uv_eps && std::abs(va0 - vb0) < uv_eps) ||
+            (std::abs(ua0 - ub1) < uv_eps && std::abs(va0 - vb1) < uv_eps);
+        bool match1 =
+            (std::abs(ua1 - ub0) < uv_eps && std::abs(va1 - vb0) < uv_eps) ||
+            (std::abs(ua1 - ub1) < uv_eps && std::abs(va1 - vb1) < uv_eps);
         if (match0 && match1)
           unite(fi, fj);
       }
@@ -217,6 +208,60 @@ struct CachedUVMesh {
 static std::mutex s_cache_mutex;
 static std::map<std::string, std::shared_ptr<CachedUVMesh>> s_uv_cache;
 
+#ifdef CHECKERED_INFILL_DEBUG_PRINT
+static void debug_print_uv_mesh_info(const CachedUVMesh &cache, int grid_cols,
+                                     int grid_rows) {
+  const indexed_triangle_set &its = cache.mesh.its;
+  printf("=== Checkered UV Mesh Debug ===\n");
+  printf("Faces and vertices (mm):\n");
+  for (size_t fi = 0; fi < its.indices.size(); ++fi) {
+    const Vec3i &face = its.indices[fi];
+    const Vec3f &v0 = its.vertices[face(0)];
+    const Vec3f &v1 = its.vertices[face(1)];
+    const Vec3f &v2 = its.vertices[face(2)];
+    printf("  face %zu: v0=(%.6f,%.6f,%.6f) v1=(%.6f,%.6f,%.6f) "
+           "v2=(%.6f,%.6f,%.6f)\n",
+           fi, double(v0.x()), double(v0.y()), double(v0.z()), double(v1.x()),
+           double(v1.y()), double(v1.z()), double(v2.x()), double(v2.y()),
+           double(v2.z()));
+  }
+  printf("UV Islands:\n");
+  for (size_t isl = 0; isl < cache.island_faces.size(); ++isl) {
+    const std::vector<size_t> &faces = cache.island_faces[isl];
+    const std::array<float, 4> &bounds = cache.island_uv_bounds[isl];
+    float u_min = bounds[0], u_max = bounds[1], v_min = bounds[2],
+          v_max = bounds[3];
+    int min_ci = std::max(0, static_cast<int>(std::floor(u_min * grid_cols)));
+    int max_ci =
+        std::min(grid_cols - 1,
+                 static_cast<int>(std::floor((u_max - 1e-9f) * grid_cols)));
+    int min_cj = std::max(0, static_cast<int>(std::floor(v_min * grid_rows)));
+    int max_cj =
+        std::min(grid_rows - 1,
+                 static_cast<int>(std::floor((v_max - 1e-9f) * grid_rows)));
+    min_ci = std::clamp(min_ci, 0, grid_cols - 1);
+    max_ci = std::clamp(max_ci, 0, grid_cols - 1);
+    min_cj = std::clamp(min_cj, 0, grid_rows - 1);
+    max_cj = std::clamp(max_cj, 0, grid_rows - 1);
+    printf("  island %zu: %zu faces [", isl, faces.size());
+    for (size_t i = 0; i < faces.size(); ++i) {
+      printf("%zu%s", faces[i], (i + 1 < faces.size()) ? "," : "");
+    }
+    printf("], bounds u=[%.4f,%.4f] v=[%.4f,%.4f], grid_numbers: [",
+           double(u_min), double(u_max), double(v_min), double(v_max));
+    bool first = true;
+    for (int cj = min_cj; cj <= max_cj; ++cj) {
+      for (int ci = min_ci; ci <= max_ci; ++ci) {
+        int grid_number = (grid_cols - cj - 1) * grid_rows + ci;
+        printf("%s%d", first ? "" : ",", grid_number);
+        first = false;
+      }
+    }
+    printf("]\n");
+  }
+}
+#endif
+
 std::shared_ptr<CachedUVMesh> get_or_load_uv_mesh(const std::string &path) {
   if (path.empty())
     return nullptr;
@@ -229,14 +274,18 @@ std::shared_ptr<CachedUVMesh> get_or_load_uv_mesh(const std::string &path) {
     return nullptr;
   auto ptr = std::make_shared<CachedUVMesh>(std::move(*opt));
   s_uv_cache[path] = ptr;
+#ifdef CHECKERED_INFILL_DEBUG_PRINT
+  debug_print_uv_mesh_info(*ptr, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS);
+#endif
   return ptr;
 }
 
 // Find mesh faces (triangle indices) whose intersection with plane z=z_mm
 // contains or overlaps the 2D segment from (ax_mm,ay_mm) to (bx_mm,by_mm).
-static std::vector<size_t> find_faces_for_segment(
-    const CachedUVMesh &cache, double ax_mm, double ay_mm, double bx_mm,
-    double by_mm, double z_mm) {
+static std::vector<size_t> find_faces_for_segment(const CachedUVMesh &cache,
+                                                  double ax_mm, double ay_mm,
+                                                  double bx_mm, double by_mm,
+                                                  double z_mm) {
   const indexed_triangle_set &its = cache.mesh.its;
   if (its.vertices.empty() || its.indices.empty())
     return {};
@@ -244,8 +293,9 @@ static std::vector<size_t> find_faces_for_segment(
   double pz = (cache.bbox_max.z() <= 0.f) ? -z_mm : z_mm;
   double mid_x = 0.5 * (ax_mm + bx_mm);
   double mid_y = 0.5 * (ay_mm + by_mm);
-  double seg_len_sq = (bx_mm - ax_mm) * (bx_mm - ax_mm) + (by_mm - ay_mm) * (by_mm - ay_mm);
-  double radius_sq = seg_len_sq * 0.26 + 1e-6;  // (0.5*seg_len)^2 + margin
+  double seg_len_sq =
+      (bx_mm - ax_mm) * (bx_mm - ax_mm) + (by_mm - ay_mm) * (by_mm - ay_mm);
+  double radius_sq = seg_len_sq * 0.26 + 1e-6; // (0.5*seg_len)^2 + margin
 
   Vec3d mid(mid_x, mid_y, pz);
   std::vector<size_t> candidates = AABBTreeIndirect::all_triangles_in_radius(
@@ -288,21 +338,344 @@ static std::vector<size_t> find_faces_for_segment(
     double tx0 = pts[0].first, ty0 = pts[0].second;
     double tx1 = pts[1].first, ty1 = pts[1].second;
 
-    auto segments_overlap = [](double ax, double ay, double bx, double by,
-                               double cx, double cy, double dx, double dy) {
-      double denom = (ax - bx) * (cy - dy) - (ay - by) * (cx - dx);
-      if (std::abs(denom) < 1e-12) {
-        return false;
+    // Require contour segment AB to overlap triangle intersection CD.
+    constexpr double eps_par = 1e-12;
+    constexpr double eps_t = 1e-9;
+    constexpr double eps_on = 1e-6;
+    double denom =
+        (ax_mm - bx_mm) * (ty0 - ty1) - (ay_mm - by_mm) * (tx0 - tx1);
+    bool overlap = false;
+    double t_a = 0, t_b = 0;
+    if (std::abs(denom) <= eps_par) {
+      double dx_cd = tx1 - tx0, dy_cd = ty1 - ty0;
+      double len_sq = dx_cd * dx_cd + dy_cd * dy_cd;
+      if (len_sq >= eps_par) {
+        double cross_a = (ax_mm - tx0) * dy_cd - (ay_mm - ty0) * dx_cd;
+        double cross_b = (bx_mm - tx0) * dy_cd - (by_mm - ty0) * dx_cd;
+        if (std::abs(cross_a) <= eps_par && std::abs(cross_b) <= eps_par) {
+          t_a = ((ax_mm - tx0) * dx_cd + (ay_mm - ty0) * dy_cd) / len_sq;
+          t_b = ((bx_mm - tx0) * dx_cd + (by_mm - ty0) * dy_cd) / len_sq;
+          double lo = std::min(t_a, t_b), hi = std::max(t_a, t_b);
+          if (hi >= -eps_t && lo <= 1.0 + eps_t) {
+            bool a_on_cd = (t_a >= -eps_on && t_a <= 1.0 + eps_on);
+            bool b_on_cd = (t_b >= -eps_on && t_b <= 1.0 + eps_on);
+            overlap = a_on_cd && b_on_cd; // segment fully on face intersection
+          }
+        }
+      } else {
+        overlap =
+            (ax_mm - tx0) * (ax_mm - tx0) + (ay_mm - ty0) * (ay_mm - ty0) <
+            eps_par;
       }
-      double t = ((ax - cx) * (cy - dy) - (ay - cy) * (cx - dx)) / denom;
-      double u = -((ax - bx) * (ay - cy) - (ay - by) * (ax - cx)) / denom;
-      return t >= -1e-9 && t <= 1.0 + 1e-9 && u >= -1e-9 && u <= 1.0 + 1e-9;
-    };
+    }
 
-    if (segments_overlap(ax_mm, ay_mm, bx_mm, by_mm, tx0, ty0, tx1, ty1))
+    if (overlap)
       out.push_back(fi);
   }
   return out;
+}
+
+// Sub-segment with its adjacent mesh face(s). Each sub-segment is a mesh edge.
+struct SubSegmentWithFaces {
+  double ax_mm, ay_mm, bx_mm, by_mm;
+  std::vector<size_t> faces;
+};
+
+// Partition point on segment AB: (x,y,t) and the mesh edge it lies on (va,vb).
+// For a vertex: va == vb == vertex_id. For edge-plane intersection: (va,vb) is
+// the edge.
+struct PartitionPoint {
+  double x, y, t;
+  int edge_va, edge_vb;
+};
+
+// Split contour segment AB by mesh edges on the segment. Partition points are
+// mesh vertices on the segment OR mesh edge-plane intersections. Each resulting
+// sub-segment lies within a single mesh face.
+// Returns empty if segment is degenerate (A≈B) or no partition points found.
+static std::vector<SubSegmentWithFaces>
+split_contour_segment_by_faces(const CachedUVMesh &cache, double ax_mm,
+                               double ay_mm, double bx_mm, double by_mm,
+                               double z_mm) {
+  const indexed_triangle_set &its = cache.mesh.its;
+  if (its.vertices.empty() || its.indices.empty())
+    return {};
+
+  constexpr double eps = 1e-6;
+  constexpr double eps_cross = 1e-9;
+
+  double dx = bx_mm - ax_mm, dy = by_mm - ay_mm;
+  double len_sq = dx * dx + dy * dy;
+  if (len_sq < eps * eps)
+    return {};
+
+  double pz = (cache.bbox_max.z() <= 0.f) ? -z_mm : z_mm;
+
+  std::vector<PartitionPoint> pts;
+
+  // 1. Mesh vertices on segment: on plane z=pz, on line AB, t in [0,1].
+  for (size_t vi = 0; vi < its.vertices.size(); ++vi) {
+    const Vec3f &v = its.vertices[vi];
+    double vx = double(v.x()), vy = double(v.y()), vz = double(v.z());
+    if (std::abs(vz - pz) > eps)
+      continue;
+
+    double px = vx - ax_mm, py = vy - ay_mm;
+    double cross = px * dy - py * dx;
+    if (std::abs(cross) > eps_cross * std::sqrt(len_sq))
+      continue;
+
+    double t = (px * dx + py * dy) / len_sq;
+    if (t >= -eps && t <= 1.0 + eps)
+      pts.push_back({vx, vy, t, int(vi), int(vi)});
+  }
+
+  // 2. Mesh edge-plane intersections on segment. Contour vertices are typically
+  // these, not mesh vertices.
+  for (size_t fi = 0; fi < its.indices.size(); ++fi) {
+    const Vec3i &face = its.indices[fi];
+    for (int e = 0; e < 3; ++e) {
+      int va = face(e), vb = face((e + 1) % 3);
+      const Vec3f &v0 = its.vertices[va];
+      const Vec3f &v1 = its.vertices[vb];
+      double z0 = double(v0.z()), z1 = double(v1.z());
+      if (std::abs(z1 - z0) < eps)
+        continue;
+      double te = (pz - z0) / (z1 - z0);
+      if (te < -eps || te > 1.0 + eps)
+        continue;
+      double px = double(v0.x()) + te * (double(v1.x()) - double(v0.x()));
+      double py = double(v0.y()) + te * (double(v1.y()) - double(v0.y()));
+
+      double seg_px = px - ax_mm, seg_py = py - ay_mm;
+      double cross = seg_px * dy - seg_py * dx;
+      if (std::abs(cross) > eps_cross * std::sqrt(len_sq))
+        continue;
+      double t = (seg_px * dx + seg_py * dy) / len_sq;
+      if (t >= -eps && t <= 1.0 + eps) {
+        int ea = va, eb = vb;
+        if (ea > eb)
+          std::swap(ea, eb);
+        pts.push_back({px, py, t, ea, eb});
+      }
+    }
+  }
+
+  if (pts.empty())
+    return {};
+
+  // #region agent log
+  {
+    constexpr double ep = 1e-5;
+    bool has_start = false, has_end = false;
+    for (const auto &p : pts) {
+      if (std::abs(p.t) < ep && std::abs(p.x - ax_mm) < ep &&
+          std::abs(p.y - ay_mm) < ep)
+        has_start = true;
+      if (std::abs(p.t - 1.0) < ep && std::abs(p.x - bx_mm) < ep &&
+          std::abs(p.y - by_mm) < ep)
+        has_end = true;
+    }
+    std::ofstream lf(
+        "/Users/anant/Documents/Personal/BambuStudio/.cursor/debug-60a69c.log",
+        std::ios::app);
+    if (lf) {
+      lf << "{\"sessionId\":\"60a69c\",\"hypothesisId\":\"H1\",\"location\":"
+            "\"FillCheckered.cpp:split_contour_segment_by_faces\",\"message\":"
+            "\"partition pts before dedup\",\"data\":{\"ax_mm\":"
+         << ax_mm << ",\"ay_mm\":" << ay_mm << ",\"bx_mm\":" << bx_mm
+         << ",\"by_mm\":" << by_mm << ",\"z_mm\":" << z_mm
+         << ",\"pts_count\":" << pts.size() << ",\"has_start\":" << has_start
+         << ",\"has_end\":" << has_end << "},\"timestamp\":"
+         << std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch())
+                .count()
+         << "}\n";
+    }
+  }
+  // #endregion
+
+  // Deduplicate by (x,y) and sort by t.
+  std::sort(pts.begin(), pts.end(),
+            [](const PartitionPoint &a, const PartitionPoint &b) {
+              return a.t < b.t;
+            });
+  auto last =
+      std::unique(pts.begin(), pts.end(),
+                  [](const PartitionPoint &a, const PartitionPoint &b) {
+                    constexpr double e = 1e-6;
+                    return std::abs(a.x - b.x) < e && std::abs(a.y - b.y) < e;
+                  });
+  pts.erase(last, pts.end());
+
+  // #region agent log
+  {
+    std::ofstream lf(
+        "/Users/anant/Documents/Personal/BambuStudio/.cursor/debug-60a69c.log",
+        std::ios::app);
+    if (lf) {
+      lf << "{\"sessionId\":\"60a69c\",\"hypothesisId\":\"H2\",\"location\":"
+            "\"FillCheckered.cpp:split_after_dedup\",\"message\":\"pts after "
+            "dedup\",\"data\":{\"pts_count\":"
+         << pts.size();
+      lf << ",\"pts\":[";
+      for (size_t i = 0; i < pts.size(); ++i) {
+        if (i)
+          lf << ",";
+        lf << "{\"x\":" << pts[i].x << ",\"y\":" << pts[i].y
+           << ",\"t\":" << pts[i].t << ",\"va\":" << pts[i].edge_va
+           << ",\"vb\":" << pts[i].edge_vb << "}";
+      }
+      lf << "]},\"timestamp\":"
+         << std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch())
+                .count()
+         << "}\n";
+    }
+  }
+  // #endregion
+
+  // 3. For mesh edge (va, vb), find face(s) containing it.
+  auto faces_for_edge = [&](int va, int vb) -> std::vector<size_t> {
+    std::vector<size_t> out;
+    Vec2i edge(va, vb);
+    if (edge(0) > edge(1))
+      std::swap(edge(0), edge(1));
+    for (size_t fi = 0; fi < its.indices.size(); ++fi) {
+      int ei = its_triangle_edge_index(its.indices[fi], edge);
+      if (ei >= 0) {
+        out.push_back(fi);
+        if (out.size() >= 2)
+          break;
+      }
+    }
+    return out;
+  };
+
+  // Face contains edge (va,vb)?
+  auto face_has_edge = [&](size_t fi, int va, int vb) -> bool {
+    Vec2i edge(va, vb);
+    if (edge(0) > edge(1))
+      std::swap(edge(0), edge(1));
+    return its_triangle_edge_index(its.indices[fi], edge) >= 0;
+  };
+
+  // Face contains vertex vid?
+  auto face_has_vertex = [&](size_t fi, int vid) -> bool {
+    const Vec3i &tri = its.indices[fi];
+    return tri(0) == vid || tri(1) == vid || tri(2) == vid;
+  };
+
+  // 4. Build sub-segments from consecutive partition points.
+  std::vector<SubSegmentWithFaces> result;
+  for (size_t i = 0; i + 1 < pts.size(); ++i) {
+    const PartitionPoint &a = pts[i];
+    const PartitionPoint &b = pts[i + 1];
+    if (std::abs(a.t - b.t) < eps)
+      continue;
+
+    std::vector<size_t> faces;
+    const bool a_is_vertex = (a.edge_va == a.edge_vb);
+    const bool b_is_vertex = (b.edge_va == b.edge_vb);
+    if (a_is_vertex && b_is_vertex) {
+      faces = faces_for_edge(a.edge_va, b.edge_va);
+    } else if (a_is_vertex) {
+      for (size_t f : faces_for_edge(b.edge_va, b.edge_vb))
+        if (face_has_vertex(f, a.edge_va))
+          faces.push_back(f);
+    } else if (b_is_vertex) {
+      for (size_t f : faces_for_edge(a.edge_va, a.edge_vb))
+        if (face_has_vertex(f, b.edge_va))
+          faces.push_back(f);
+    } else {
+      for (size_t f : faces_for_edge(a.edge_va, a.edge_vb))
+        if (face_has_edge(f, b.edge_va, b.edge_vb))
+          faces.push_back(f);
+    }
+    if (!faces.empty()) {
+      SubSegmentWithFaces sub;
+      sub.ax_mm = a.x;
+      sub.ay_mm = a.y;
+      sub.bx_mm = b.x;
+      sub.by_mm = b.y;
+      sub.faces = std::move(faces);
+      result.push_back(std::move(sub));
+    } else {
+      // Fallback: topology failed (consecutive edges may not share vertex when
+      // segment crosses multiple mesh regions). Use overlap-based face lookup,
+      // then filter to only faces that have partition-point edges (exclude
+      // interior faces that overlap but lack those edges).
+      faces = find_faces_for_segment(cache, a.x, a.y, b.x, b.y, z_mm);
+      std::vector<size_t> filtered;
+      for (size_t f : faces) {
+        bool has_a = a_is_vertex ? face_has_vertex(f, a.edge_va)
+                                 : face_has_edge(f, a.edge_va, a.edge_vb);
+        bool has_b = b_is_vertex ? face_has_vertex(f, b.edge_va)
+                                 : face_has_edge(f, b.edge_va, b.edge_vb);
+        if (has_a || has_b)
+          filtered.push_back(f);
+      }
+      faces = std::move(filtered);
+      // Second fallback: when overlap-based lookup returns empty (e.g. strict
+      // a_on_cd&&b_on_cd rejects), use union of faces from both partition
+      // point edges. Sub-segment lies on a face that has at least one of the
+      // two edges.
+      if (faces.empty() && !a_is_vertex && !b_is_vertex) {
+        for (size_t f : faces_for_edge(a.edge_va, a.edge_vb))
+          faces.push_back(f);
+        for (size_t f : faces_for_edge(b.edge_va, b.edge_vb)) {
+          if (std::find(faces.begin(), faces.end(), f) == faces.end())
+            faces.push_back(f);
+        }
+      } else if (faces.empty() && a_is_vertex && !b_is_vertex) {
+        for (size_t f : faces_for_edge(b.edge_va, b.edge_vb))
+          if (face_has_vertex(f, a.edge_va))
+            faces.push_back(f);
+      } else if (faces.empty() && !a_is_vertex && b_is_vertex) {
+        for (size_t f : faces_for_edge(a.edge_va, a.edge_vb))
+          if (face_has_vertex(f, b.edge_va))
+            faces.push_back(f);
+      }
+      if (!faces.empty()) {
+        SubSegmentWithFaces sub;
+        sub.ax_mm = a.x;
+        sub.ay_mm = a.y;
+        sub.bx_mm = b.x;
+        sub.by_mm = b.y;
+        sub.faces = std::move(faces);
+        result.push_back(std::move(sub));
+      }
+    }
+  }
+
+  // #region agent log
+  {
+    std::ofstream lf(
+        "/Users/anant/Documents/Personal/BambuStudio/.cursor/debug-60a69c.log",
+        std::ios::app);
+    if (lf) {
+      lf << "{\"sessionId\":\"60a69c\",\"hypothesisId\":\"H3\",\"location\":"
+            "\"FillCheckered.cpp:split_result\",\"message\":\"sub_segments "
+            "count\",\"data\":{\"result_count\":"
+         << result.size();
+      lf << ",\"segments\":[";
+      for (size_t i = 0; i < result.size(); ++i) {
+        if (i)
+          lf << ",";
+        lf << "{\"ax\":" << result[i].ax_mm << ",\"ay\":" << result[i].ay_mm
+           << ",\"bx\":" << result[i].bx_mm << ",\"by\":" << result[i].by_mm
+           << ",\"faces\":" << result[i].faces.size() << "}";
+      }
+      lf << "]},\"timestamp\":"
+         << std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch())
+                .count()
+         << "}\n";
+    }
+  }
+  // #endregion
+
+  return result;
 }
 
 // Barycentric coordinates of point Q in triangle (A, B, C): Q = w0*A + w1*B +
@@ -383,27 +756,22 @@ static Point point_mm_to_model_surface(const CachedUVMesh &cache, double x_mm,
 // point lies on, then interpolating that face's UV map. Returns nullopt if
 // point is not on mesh surface. If the UV mesh has Z in [-H, 0] (e.g. top=0,
 // bottom negative), we use -z_mm for query.
-// When next_xyz_mm is provided and the hit lies on a seam (u or v at 0 or 1),
-// we raycast the next point and canonicalize UV so the returned value is on the
-// same "side" of the seam as the direction toward the next point.
 // When restrict_to_faces is non-null, only consider those face indices.
-static std::optional<Vec2f> point_to_uv(
-    const CachedUVMesh &cache, double x_mm, double y_mm, double z_mm,
-    std::optional<Vec3d> next_xyz_mm = std::nullopt,
-    const std::vector<size_t> *restrict_to_faces = nullptr) {
+static std::optional<Vec2f>
+point_to_uv(const CachedUVMesh &cache, double x_mm, double y_mm, double z_mm,
+            const std::vector<size_t> *restrict_to_faces = nullptr) {
   const indexed_triangle_set &its = cache.mesh.its;
   if (its.vertices.empty() || its.indices.empty() ||
-      cache.uvs.size() != its.indices.size())
-    {
-      printf("No UVs found for mesh\n");
-      printf("Vertices: %zu, Indices: %zu, UVs: %zu\n", its.vertices.size(), its.indices.size(), cache.uvs.size());
-      return std::nullopt;
-    }
+      cache.uvs.size() != its.indices.size()) {
+    printf("No UVs found for mesh\n");
+    printf("Vertices: %zu, Indices: %zu, UVs: %zu\n", its.vertices.size(),
+           its.indices.size(), cache.uvs.size());
+    return std::nullopt;
+  }
 
-  double pz = (cache.bbox_max.z() <= 0.f) ? -z_mm : z_mm;
+  // double pz = (cache.bbox_max.z() <= 0.f) ? -z_mm : z_mm;
+  double pz = z_mm;
   Vec3d P(x_mm, y_mm, pz);
-
-  printf("P: %f, %f, %f\n", P.x(), P.y(), P.z());
 
   size_t hit_idx = 0;
   Vec3d hit_point;
@@ -419,6 +787,7 @@ static std::optional<Vec2f> point_to_uv(
       Vec3d c = its.vertices[face(2)].cast<double>();
       Vec3d ab = b - a, ac = c - a, ap = P - a;
       double d1 = ab.dot(ap), d2 = ac.dot(ap);
+
       Vec3d closest;
       if (d1 <= 0 && d2 <= 0) {
         closest = a;
@@ -433,7 +802,8 @@ static std::optional<Vec2f> point_to_uv(
           if (d6 >= 0 && d5 <= d6) {
             closest = c;
           } else {
-            double vc = d1 * d4 - d3 * d2, vb = d5 * d2 - d1 * d6, va = d3 * d6 - d5 * d4;
+            double vc = d1 * d4 - d3 * d2, vb = d5 * d2 - d1 * d6,
+                   va = d3 * d6 - d5 * d4;
             double denom = 1.0 / (va + vb + vc);
             double v = vb * denom, w = vc * denom;
             closest = a + ab * v + ac * w;
@@ -452,15 +822,15 @@ static std::optional<Vec2f> point_to_uv(
         its.vertices, its.indices, cache.tree, P, hit_idx, hit_point);
   }
 
-  printf("Hit idx: %zu, Hit point: %f, %f, %f\n", hit_idx, hit_point.x(), hit_point.y(), hit_point.z());
-  printf("Best sqr dist: %f\n", best_sqr_dist);
-
   const double epsilon_sq = 1e-6;
+
   if (best_sqr_dist < 0 || best_sqr_dist > epsilon_sq) {
-    // #region agent log
-    debug_log_pt2uv("fail_dist", x_mm, y_mm, z_mm, best_sqr_dist, 1,
-                    restrict_to_faces ? restrict_to_faces->size() : 0);
-    // #endregion
+    printf("Best sqr dist is not valid, retrying with full mesh\n");
+    best_sqr_dist = AABBTreeIndirect::squared_distance_to_indexed_triangle_set(
+        its.vertices, its.indices, cache.tree, P, hit_idx, hit_point);
+  }
+
+  if (best_sqr_dist < 0 || best_sqr_dist > epsilon_sq) {
     printf("Best sqr dist is not valid\n");
     return std::nullopt;
   }
@@ -474,62 +844,31 @@ static std::optional<Vec2f> point_to_uv(
   Vec3d B = its.vertices[face(1)].cast<double>();
   Vec3d C = its.vertices[face(2)].cast<double>();
   auto bary = barycentric_coords_3d(hit_point, A, B, C);
-  if (!bary){
+  if (!bary) {
     printf("Barycentric coords are not valid\n");
     return std::nullopt;
   }
 
-  printf("Barycentric coords: %f, %f, %f\n", (*bary)[0], (*bary)[1], (*bary)[2]);
-
   float w0 = (*bary)[0], w1 = (*bary)[1], w2 = (*bary)[2];
   const std::array<Vec2f, 3> &uv_arr = cache.uvs[hit_idx];
   auto fold_uv = [](float t) {
-    if (t > 1.f && t <= 2.f) return 2.f - t;
-    if (t > 2.f) return t - std::floor(t);
-    if (t < 0.f) return t - std::floor(t);
+    if (t > 1.f && t <= 2.f)
+      return 2.f - t;
+    if (t > 2.f)
+      return t - std::floor(t);
+    if (t < 0.f)
+      return t - std::floor(t);
     return t;
   };
-  float u0 = fold_uv(uv_arr[0].x()), u1 = fold_uv(uv_arr[1].x()), u2 = fold_uv(uv_arr[2].x());
-  float v0 = fold_uv(uv_arr[0].y()), v1 = fold_uv(uv_arr[1].y()), v2 = fold_uv(uv_arr[2].y());
+  float u0 = fold_uv(uv_arr[0].x()), u1 = fold_uv(uv_arr[1].x()),
+        u2 = fold_uv(uv_arr[2].x());
+  float v0 = fold_uv(uv_arr[0].y()), v1 = fold_uv(uv_arr[1].y()),
+        v2 = fold_uv(uv_arr[2].y());
   float u = w0 * u0 + w1 * u1 + w2 * u2;
   float v = w0 * v0 + w1 * v1 + w2 * v2;
   u = std::clamp(u, 0.f, 1.f);
   v = std::clamp(v, 0.f, 1.f);
-  printf("U: %f, V: %f\n", u, v);
 
-  constexpr float seam_eps = 1e-6f;
-  const bool on_u_seam = (u <= seam_eps || u >= 1.f - seam_eps);
-  const bool on_v_seam = (v <= seam_eps || v >= 1.f - seam_eps);
-  if ((on_u_seam || on_v_seam) && next_xyz_mm) {
-    printf("On seam, next point: %f, %f, %f\n", next_xyz_mm->x(), next_xyz_mm->y(), next_xyz_mm->z());
-    std::optional<Vec2f> next_uv = point_to_uv(
-        cache, next_xyz_mm->x(), next_xyz_mm->y(), next_xyz_mm->z(),
-        std::nullopt, restrict_to_faces);
-    if (next_uv) {
-      printf("Next UV: %f, %f\n", next_uv->x(), next_uv->y());
-      if (on_u_seam) {
-        printf("On u seam, next uv x: %f\n", next_uv->x());
-        if (u >= 1.f - seam_eps && next_uv->x() < 0.5f)
-          u = 0.f;
-        else if (u <= seam_eps && next_uv->x() > 0.5f)
-          u = 1.f;
-      }
-      if (on_v_seam) {
-        printf("On v seam, next uv y: %f\n", next_uv->y());
-        if (v >= 1.f - seam_eps && next_uv->y() < 0.5f)
-          v = 0.f;
-        else if (v <= seam_eps && next_uv->y() > 0.5f)
-          v = 1.f;
-      }
-    }
-  }
-
-  printf("Final U: %f, V: %f\n", u, v);
-
-  // #region agent log
-  debug_log_pt2uv("ok", x_mm, y_mm, z_mm, best_sqr_dist, 0,
-                  restrict_to_faces ? restrict_to_faces->size() : 0);
-  // #endregion
   return Vec2f(u, v);
 }
 
@@ -572,9 +911,9 @@ barycentric_coords_2d(const Vec2f &P, const Vec2f &A, const Vec2f &B,
 // mesh). Finds the first triangle whose UV triangle contains (u,v) and
 // interpolates the 3D position. Returns nullopt if no triangle contains (u,v).
 // When restrict_to_faces is non-null, only search those face indices.
-static std::optional<Vec3d> uv_to_point(
-    const CachedUVMesh &cache, float u, float v,
-    const std::vector<size_t> *restrict_to_faces = nullptr) {
+static std::optional<Vec3d>
+uv_to_point(const CachedUVMesh &cache, float u, float v,
+            const std::vector<size_t> *restrict_to_faces = nullptr) {
   const indexed_triangle_set &its = cache.mesh.its;
   if (its.vertices.empty() || its.indices.empty() ||
       cache.uvs.size() != its.indices.size())
@@ -584,9 +923,9 @@ static std::optional<Vec3d> uv_to_point(
   v = std::clamp(v, 0.f, 1.f);
   Vec2f P(u, v);
 
-  const std::vector<size_t> *indices = restrict_to_faces && !restrict_to_faces->empty()
-      ? restrict_to_faces
-      : nullptr;
+  const std::vector<size_t> *indices =
+      restrict_to_faces && !restrict_to_faces->empty() ? restrict_to_faces
+                                                       : nullptr;
 
   auto search = [&](size_t i) {
     const std::array<Vec2f, 3> &uv_arr = cache.uvs[i];
@@ -663,8 +1002,8 @@ static bool is_uv_on_grid_edge(float u, float v, int grid_cols, int grid_rows) {
 // Map UV point (u, v) in [0,1]^2 to grid cell (i, j). u=1/v=1 map to last cell.
 // When (u,v) is on a grid edge and (dir_u, dir_v) is non-zero, step by a
 // minimal amount along the direction and use that point's cell to disambiguate.
-// Seam (0 vs 1) is canonicalized in point_to_uv when next point is provided;
-// here we only step to pick the cell the segment actually enters.
+// Here we step to pick the cell the segment actually enters when on a grid
+// edge.
 static std::pair<int, int> uv_to_grid_cell(float u, float v, int grid_cols,
                                            int grid_rows, float dir_u = 0.f,
                                            float dir_v = 0.f) {
@@ -744,17 +1083,7 @@ get_contour_points_uv_info(const Polygon &contour, double z_mm,
       x_mm += outward_offset_mm * n.x();
       y_mm += outward_offset_mm * n.y();
     }
-    std::optional<Vec3d> next_mm;
-    const Point &next_pt = contour.points[(i + 1) % n_pts];
-    double nx_mm = unscale_(next_pt.x()) + origin_x_mm;
-    double ny_mm = unscale_(next_pt.y()) + origin_y_mm;
-    if (outward_offset_mm > 0.) {
-      Vec2d n_next = outward_unit_normal(contour, (i + 1) % n_pts);
-      nx_mm += outward_offset_mm * n_next.x();
-      ny_mm += outward_offset_mm * n_next.y();
-    }
-    next_mm = Vec3d(nx_mm, ny_mm, z_mm);
-    std::optional<Vec2f> uv = point_to_uv(cache, x_mm, y_mm, z_mm, next_mm);
+    std::optional<Vec2f> uv = point_to_uv(cache, x_mm, y_mm, z_mm);
     ContourPointUVInfo info;
     info.point = pt;
     if (uv) {
@@ -894,10 +1223,14 @@ static std::pair<float, int> segment_exit_cell(const Vec2f &a, const Vec2f &b,
   auto consider = [&](std::optional<float> t, int edge) {
     if (!t || *t < t_exit_min || *t >= t_best)
       return;
-    if (edge == 0 && du >= -dir_eps) return;  // left: only if moving left (du < 0)
-    if (edge == 1 && du <= dir_eps) return;    // right: only if moving right (du > 0)
-    if (edge == 2 && dv >= -dir_eps) return;   // bottom: only if moving down (dv < 0)
-    if (edge == 3 && dv <= dir_eps) return;     // top: only if moving up (dv > 0)
+    if (edge == 0 && du >= -dir_eps)
+      return; // left: only if moving left (du < 0)
+    if (edge == 1 && du <= dir_eps)
+      return; // right: only if moving right (du > 0)
+    if (edge == 2 && dv >= -dir_eps)
+      return; // bottom: only if moving down (dv < 0)
+    if (edge == 3 && dv <= dir_eps)
+      return; // top: only if moving up (dv > 0)
     t_best = *t;
     edge_best = edge;
   };
@@ -982,9 +1315,10 @@ subdivide_uv_segment_by_grid(const Vec2f &a, const Vec2f &b, int grid_cols,
   constexpr float uv_inset = 1e-6f;
   int clamp_ci_min = min_ci, clamp_ci_max = max_ci;
   int clamp_cj_min = min_cj, clamp_cj_max = max_cj;
-  // When endpoints disagree on column (e.g. one in 10, one in 11 due to u=11/12),
-  // restrict to the midpoint's column only so we don't step into the wrong column.
-  // Do not restrict row to midpoint or a vertical segment would collapse to one cell.
+  // When endpoints disagree on column (e.g. one in 10, one in 11 due to
+  // u=11/12), restrict to the midpoint's column only so we don't step into the
+  // wrong column. Do not restrict row to midpoint or a vertical segment would
+  // collapse to one cell.
   if (min_ci != max_ci) {
     const float mid_u = 0.5f * (a.x() + b.x());
     const float mid_v = 0.5f * (a.y() + b.y());
@@ -998,8 +1332,10 @@ subdivide_uv_segment_by_grid(const Vec2f &a, const Vec2f &b, int grid_cols,
   const float u_hi = float(clamp_ci_max + 1) / float(grid_cols) - uv_inset;
   const float v_lo = float(clamp_cj_min) / float(grid_rows) + uv_inset;
   const float v_hi = float(clamp_cj_max + 1) / float(grid_rows) - uv_inset;
-  const Vec2f a_clamped(std::clamp(a.x(), u_lo, u_hi), std::clamp(a.y(), v_lo, v_hi));
-  const Vec2f b_clamped(std::clamp(b.x(), u_lo, u_hi), std::clamp(b.y(), v_lo, v_hi));
+  const Vec2f a_clamped(std::clamp(a.x(), u_lo, u_hi),
+                        std::clamp(a.y(), v_lo, v_hi));
+  const Vec2f b_clamped(std::clamp(b.x(), u_lo, u_hi),
+                        std::clamp(b.y(), v_lo, v_hi));
 
   du = b_clamped.x() - a_clamped.x();
   dv = b_clamped.y() - a_clamped.y();
@@ -1014,7 +1350,8 @@ subdivide_uv_segment_by_grid(const Vec2f &a, const Vec2f &b, int grid_cols,
   const int walk_max_cj = clamp_cj_max;
 
   // Start cell from clamped point so we're in the correct cell after clamping.
-  auto start_cell = uv_to_grid_cell(a_clamped.x(), a_clamped.y(), grid_cols, grid_rows, du, dv);
+  auto start_cell = uv_to_grid_cell(a_clamped.x(), a_clamped.y(), grid_cols,
+                                    grid_rows, du, dv);
   ci = std::clamp(start_cell.first, walk_min_ci, walk_max_ci);
   cj = std::clamp(start_cell.second, walk_min_cj, walk_max_cj);
 
@@ -1030,8 +1367,8 @@ subdivide_uv_segment_by_grid(const Vec2f &a, const Vec2f &b, int grid_cols,
       break;
 
     current_uv = end_uv;
-    auto next = adjacent_cell_bounded(ci, cj, exit_edge, walk_min_ci, walk_max_ci,
-                                      walk_min_cj, walk_max_cj);
+    auto next = adjacent_cell_bounded(ci, cj, exit_edge, walk_min_ci,
+                                      walk_max_ci, walk_min_cj, walk_max_cj);
     if (next.first == ci && next.second == cj)
       break;
     ci = next.first;
@@ -1043,19 +1380,22 @@ subdivide_uv_segment_by_grid(const Vec2f &a, const Vec2f &b, int grid_cols,
 // Subdivide UV segment a->b by grid, restricted to island UV bounds
 // [u_min,u_max] x [v_min,v_max]. Only returns segments whose grid cells fall
 // within the island. Uses subdivide_uv_segment_by_grid with clamped cell range.
-static std::vector<UVSegmentInCell> subdivide_uv_segment_by_grid_clamped(
-    const Vec2f &a, const Vec2f &b, int grid_cols, int grid_rows,
-    float u_min, float u_max, float v_min, float v_max) {
+static std::vector<UVSegmentInCell>
+subdivide_uv_segment_by_grid_clamped(const Vec2f &a, const Vec2f &b,
+                                     int grid_cols, int grid_rows, float u_min,
+                                     float u_max, float v_min, float v_max) {
   float du = b.x() - a.x(), dv = b.y() - a.y();
-  auto [ci_a, cj_a] = uv_to_grid_cell(a.x(), a.y(), grid_cols, grid_rows, du, dv);
-  auto [ci_b, cj_b] = uv_to_grid_cell(b.x(), b.y(), grid_cols, grid_rows, -du, -dv);
+  auto [ci_a, cj_a] =
+      uv_to_grid_cell(a.x(), a.y(), grid_cols, grid_rows, du, dv);
+  auto [ci_b, cj_b] =
+      uv_to_grid_cell(b.x(), b.y(), grid_cols, grid_rows, -du, -dv);
 
   int min_ci = std::max(0, static_cast<int>(std::floor(u_min * grid_cols)));
-  int max_ci = std::min(grid_cols - 1,
-                        static_cast<int>(std::floor((u_max - 1e-9f) * grid_cols)));
+  int max_ci = std::min(
+      grid_cols - 1, static_cast<int>(std::floor((u_max - 1e-9f) * grid_cols)));
   int min_cj = std::max(0, static_cast<int>(std::floor(v_min * grid_rows)));
-  int max_cj = std::min(grid_rows - 1,
-                        static_cast<int>(std::floor((v_max - 1e-9f) * grid_rows)));
+  int max_cj = std::min(
+      grid_rows - 1, static_cast<int>(std::floor((v_max - 1e-9f) * grid_rows)));
 
   min_ci = std::clamp(min_ci, 0, grid_cols - 1);
   max_ci = std::clamp(max_ci, 0, grid_cols - 1);
@@ -1078,7 +1418,8 @@ static std::vector<UVSegmentInCell> subdivide_uv_segment_by_grid_clamped(
   du = b_clamped.x() - a_clamped.x();
   dv = b_clamped.y() - a_clamped.y();
   Vec2f current_uv = a_clamped;
-  auto [ci_start, cj_start] = uv_to_grid_cell(a_clamped.x(), a_clamped.y(), grid_cols, grid_rows, du, dv);
+  auto [ci_start, cj_start] = uv_to_grid_cell(a_clamped.x(), a_clamped.y(),
+                                              grid_cols, grid_rows, du, dv);
   int ci = std::clamp(ci_start, walk_min_ci, walk_max_ci);
   int cj = std::clamp(cj_start, walk_min_cj, walk_max_cj);
 
@@ -1095,8 +1436,8 @@ static std::vector<UVSegmentInCell> subdivide_uv_segment_by_grid_clamped(
       break;
 
     current_uv = end_uv;
-    auto next = adjacent_cell_bounded(ci, cj, exit_edge, walk_min_ci, walk_max_ci,
-                                     walk_min_cj, walk_max_cj);
+    auto next = adjacent_cell_bounded(ci, cj, exit_edge, walk_min_ci,
+                                      walk_max_ci, walk_min_cj, walk_max_cj);
     if (next.first == ci && next.second == cj)
       break;
     ci = next.first;
@@ -1118,7 +1459,6 @@ extract_black_contour_segments(const Polygon &contour, double z_mm,
   if (n == 0)
     return result;
 
-  printf("Cache face to island: %zu\n", cache.face_to_island.size());
   if (cache.face_to_island.empty() || cache.island_faces.empty())
     return result;
 
@@ -1129,78 +1469,55 @@ extract_black_contour_segments(const Polygon &contour, double z_mm,
     Point p_b = contour.points[(k + 1) % n];
     const Point A_xy = point_to_model_surface_mm(cache, p_a, outward_offset_mm);
     const Point B_xy = point_to_model_surface_mm(cache, p_b, outward_offset_mm);
-    printf("A xy: %d, %d, B xy: %d, %d\n", A_xy.x(), A_xy.y(), B_xy.x(), B_xy.y());
 
     double ax_mm = double(A_xy.x());
     double ay_mm = double(A_xy.y());
     double bx_mm = double(B_xy.x());
     double by_mm = double(B_xy.y());
 
-    std::vector<size_t> faces =
-        find_faces_for_segment(cache, ax_mm, ay_mm, bx_mm, by_mm, z_mm);
-    if (faces.empty()) {
-      printf("No faces found for segment: %f, %f -> %f, %f\n", ax_mm, ay_mm, bx_mm, by_mm);
-      continue;
-    }
+    std::vector<SubSegmentWithFaces> sub_segments =
+        split_contour_segment_by_faces(cache, ax_mm, ay_mm, bx_mm, by_mm, z_mm);
 
-    int island_id = cache.face_to_island[faces[0]];
-    if (island_id < 0 ||
-        size_t(island_id) >= cache.island_uv_bounds.size())
-      {
-        printf("No island found for segment: %f, %f -> %f, %f\n", ax_mm, ay_mm, bx_mm, by_mm);
-        continue;
-      }
-
-    printf("Island id: %i\n", island_id);
-
-    const std::vector<size_t> &island_face_list = cache.island_faces[island_id];
-    const std::array<float, 4> &bounds = cache.island_uv_bounds[island_id];
-    float u_min = bounds[0], u_max = bounds[1], v_min = bounds[2], v_max = bounds[3];
-
-    printf("U min: %f, U max: %f, V min: %f, V max: %f\n", u_min, u_max, v_min, v_max);
-    for (const auto &face : island_face_list) {
-      printf("Face: %zu\n", face);
-    }
-
-    auto A_uv = point_to_uv(cache, ax_mm, ay_mm, z_mm, Vec3d(bx_mm, by_mm, z_mm),
-                            &island_face_list);
-    auto B_uv = point_to_uv(cache, bx_mm, by_mm, z_mm, Vec3d(ax_mm, ay_mm, z_mm),
-                            &island_face_list);
-
-    if(!A_uv) {
-      printf("No UV found for A: %f, %f\n", ax_mm, ay_mm);
-    }
-    if(!B_uv) {
-      printf("No UV found for B: %f, %f\n", bx_mm, by_mm);
-    }
-
-    if (!A_uv || !B_uv)
-      {
-        printf("No UV found for segment: %f, %f -> %f, %f\n", ax_mm, ay_mm, bx_mm, by_mm);
-        continue;
-      }
-
-    printf("A UV: %f, %f, B UV: %f, %f\n", A_uv->x(), A_uv->y(), B_uv->x(), B_uv->y());
-
-    std::vector<UVSegmentInCell> cell_segments = subdivide_uv_segment_by_grid_clamped(
-        *A_uv, *B_uv, grid_cols, grid_rows, u_min, u_max, v_min, v_max);
-
-    for (const UVSegmentInCell &seg : cell_segments) {
-      if (!is_black_cell(seg.ci, seg.cj))
+    for (const SubSegmentWithFaces &sub : sub_segments) {
+      if (sub.faces.empty())
         continue;
 
-      auto start_opt = uv_to_point(cache, seg.start_uv.x(), seg.start_uv.y(),
+      int island_id = cache.face_to_island[sub.faces[0]];
+      if (island_id < 0 || size_t(island_id) >= cache.island_uv_bounds.size())
+        continue;
+
+      const std::vector<size_t> &island_face_list =
+          cache.island_faces[island_id];
+
+      auto A_uv =
+          point_to_uv(cache, sub.ax_mm, sub.ay_mm, z_mm, &island_face_list);
+      auto B_uv =
+          point_to_uv(cache, sub.bx_mm, sub.by_mm, z_mm, &island_face_list);
+
+      if (!A_uv || !B_uv)
+        continue;
+
+      std::vector<UVSegmentInCell> cell_segments =
+          subdivide_uv_segment_by_grid(*A_uv, *B_uv, grid_cols, grid_rows);
+
+      for (const UVSegmentInCell &seg : cell_segments) {
+        if (!is_black_cell(seg.ci, seg.cj))
+          continue;
+
+        auto start_opt = uv_to_point(cache, seg.start_uv.x(), seg.start_uv.y(),
+                                     &island_face_list);
+        auto end_opt = uv_to_point(cache, seg.end_uv.x(), seg.end_uv.y(),
                                    &island_face_list);
-      auto end_opt = uv_to_point(cache, seg.end_uv.x(), seg.end_uv.y(),
-                                 &island_face_list);
-      if (!start_opt || !end_opt)
-        continue;
 
-      Point start_pt = point_mm_to_model_surface(
-          cache, start_opt->x(), start_opt->y(), outward_offset_mm);
-      Point end_pt = point_mm_to_model_surface(
-          cache, end_opt->x(), end_opt->y(), outward_offset_mm);
-      segments.push_back({start_pt, end_pt});
+        if (!start_opt || !end_opt)
+          continue;
+
+        Point start_pt = point_mm_to_model_surface(
+            cache, start_opt->x(), start_opt->y(), outward_offset_mm);
+        Point end_pt = point_mm_to_model_surface(
+            cache, end_opt->x(), end_opt->y(), outward_offset_mm);
+        segments.push_back({start_pt, end_pt});
+      }
     }
   }
 
@@ -1210,6 +1527,7 @@ extract_black_contour_segments(const Polygon &contour, double z_mm,
     Vec2d d = (a - b).cast<double>();
     return d.squaredNorm() <= eps2;
   };
+
   std::vector<bool> used(segments.size(), false);
   for (size_t i = 0; i < segments.size(); ++i) {
     if (used[i])
@@ -1335,28 +1653,76 @@ void FillCheckered::_fill_surface_single(
     const double ox = m_contour_to_mesh_origin_mm.x();
     const double oy = m_contour_to_mesh_origin_mm.y();
 
-    if(size_t(this->layer_id) == 10) {
+    if (size_t(this->layer_id) == 10) {
 
       // for (size_t i = 0; i < outer_contour.points.size(); ++i) {
       //   z_mm = 20.0;
-      //   auto point_mm = point_to_model_surface_mm(*cache, outer_contour.points[i], outward_offset_mm);
-      //   printf("Point mm: %d, %d\n", point_mm.x(), point_mm.y());
-      //   auto uv = point_to_uv(*cache, point_mm.x(), point_mm.y(), z_mm);
-      //   if (uv) {
-      //     auto grid_cell = uv_to_grid_cell(uv->x(), uv->y(), DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS);
-      //     printf("Grid cell: %i, %i\n", grid_cell.first, grid_cell.second);
-      //     auto grid_number = (DEFAULT_GRID_COLS - grid_cell.second - 1) * DEFAULT_GRID_ROWS + grid_cell.first;
-      //     printf("Grid number: %i\n", grid_number);
+      //   auto point_mm = point_to_model_surface_mm(*cache,
+      //   outer_contour.points[i], outward_offset_mm); printf("Point mm: %d,
+      //   %d\n", point_mm.x(), point_mm.y()); auto uv = point_to_uv(*cache,
+      //   point_mm.x(), point_mm.y(), z_mm); if (uv) {
+      //     auto grid_cell = uv_to_grid_cell(uv->x(), uv->y(),
+      //     DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS); printf("Grid cell: %i,
+      //     %i\n", grid_cell.first, grid_cell.second); auto grid_number =
+      //     (DEFAULT_GRID_COLS - grid_cell.second - 1) * DEFAULT_GRID_ROWS +
+      //     grid_cell.first; printf("Grid number: %i\n", grid_number);
       //   } else {
       //     printf("No UV found for point %zu\n", i);
-      //   }  
+      //   }
       // }
 
-      printf("Extracting black contour segments for layer %zu\n", this->layer_id);
-      polylines_out = extract_black_contour_segments(
-        outer_contour, z_mm, *cache, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS,
-        ox, oy, outward_offset_mm);
+      Point a = Point(40.0, 20.0);
+      Point b = Point(0.0, 20.0);
 
+      double ax_mm = double(a.x());
+      double ay_mm = double(a.y());
+      double bx_mm = double(b.x());
+      double by_mm = double(b.y());
+      double z_mm = 20.0;
+
+      std::vector<SubSegmentWithFaces> sub_segments =
+          split_contour_segment_by_faces(*cache, ax_mm, ay_mm, bx_mm, by_mm,
+                                         z_mm);
+
+      printf("Sub segments: %zu\n", sub_segments.size());
+      for (const SubSegmentWithFaces &sub : sub_segments) {
+        printf("Sub segment: %f, %f -> %f, %f\n", sub.ax_mm, sub.ay_mm,
+               sub.bx_mm, sub.by_mm);
+
+        std::vector<size_t> faces = find_faces_for_segment(
+            *cache, sub.ax_mm, sub.ay_mm, sub.bx_mm, sub.by_mm, z_mm);
+
+        printf("Faces: %zu\n", faces.size());
+        for (const auto &face : faces) {
+          printf("Face: %zu\n", face);
+        }
+
+        auto A_uv = point_to_uv(*cache, sub.ax_mm, sub.ay_mm, z_mm, &faces);
+        auto B_uv = point_to_uv(*cache, sub.bx_mm, sub.by_mm, z_mm, &faces);
+        printf("A UV: %f, %f, B UV: %f, %f\n", A_uv->x(), A_uv->y(), B_uv->x(),
+               B_uv->y());
+
+        std::vector<UVSegmentInCell> cell_segments =
+            subdivide_uv_segment_by_grid(*A_uv, *B_uv, DEFAULT_GRID_COLS,
+                                         DEFAULT_GRID_ROWS);
+        for (const UVSegmentInCell &seg : cell_segments) {
+          auto grid_number =
+              (DEFAULT_GRID_COLS - seg.cj - 1) * DEFAULT_GRID_ROWS + seg.ci;
+          printf("Segment: %d - (%f, %f) -> (%f, %f)\n", grid_number,
+                 seg.start_uv.x(), seg.start_uv.y(), seg.end_uv.x(),
+                 seg.end_uv.y());
+        }
+      }
+
+      // printf("Faces: %zu\n", faces.size());
+      // for (const auto &face : faces) {
+      //   printf("Face: %zu\n", face);
+      // }
+
+      // printf("Extracting black contour segments for layer %zu\n",
+      // this->layer_id); polylines_out = extract_black_contour_segments(
+      //   outer_contour, z_mm, *cache, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS,
+      //   ox, oy, outward_offset_mm);
     }
   }
 }
