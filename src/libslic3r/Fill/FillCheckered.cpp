@@ -11,10 +11,8 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cmath>
 #include <cstdio>
-#include <fstream>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -465,37 +463,6 @@ split_contour_segment_by_faces(const CachedUVMesh &cache, double ax_mm,
   if (pts.empty())
     return {};
 
-  // #region agent log
-  {
-    constexpr double ep = 1e-5;
-    bool has_start = false, has_end = false;
-    for (const auto &p : pts) {
-      if (std::abs(p.t) < ep && std::abs(p.x - ax_mm) < ep &&
-          std::abs(p.y - ay_mm) < ep)
-        has_start = true;
-      if (std::abs(p.t - 1.0) < ep && std::abs(p.x - bx_mm) < ep &&
-          std::abs(p.y - by_mm) < ep)
-        has_end = true;
-    }
-    std::ofstream lf(
-        "/Users/anant/Documents/Personal/BambuStudio/.cursor/debug-60a69c.log",
-        std::ios::app);
-    if (lf) {
-      lf << "{\"sessionId\":\"60a69c\",\"hypothesisId\":\"H1\",\"location\":"
-            "\"FillCheckered.cpp:split_contour_segment_by_faces\",\"message\":"
-            "\"partition pts before dedup\",\"data\":{\"ax_mm\":"
-         << ax_mm << ",\"ay_mm\":" << ay_mm << ",\"bx_mm\":" << bx_mm
-         << ",\"by_mm\":" << by_mm << ",\"z_mm\":" << z_mm
-         << ",\"pts_count\":" << pts.size() << ",\"has_start\":" << has_start
-         << ",\"has_end\":" << has_end << "},\"timestamp\":"
-         << std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch())
-                .count()
-         << "}\n";
-    }
-  }
-  // #endregion
-
   // Deduplicate by (x,y) and sort by t.
   std::sort(pts.begin(), pts.end(),
             [](const PartitionPoint &a, const PartitionPoint &b) {
@@ -508,33 +475,6 @@ split_contour_segment_by_faces(const CachedUVMesh &cache, double ax_mm,
                     return std::abs(a.x - b.x) < e && std::abs(a.y - b.y) < e;
                   });
   pts.erase(last, pts.end());
-
-  // #region agent log
-  {
-    std::ofstream lf(
-        "/Users/anant/Documents/Personal/BambuStudio/.cursor/debug-60a69c.log",
-        std::ios::app);
-    if (lf) {
-      lf << "{\"sessionId\":\"60a69c\",\"hypothesisId\":\"H2\",\"location\":"
-            "\"FillCheckered.cpp:split_after_dedup\",\"message\":\"pts after "
-            "dedup\",\"data\":{\"pts_count\":"
-         << pts.size();
-      lf << ",\"pts\":[";
-      for (size_t i = 0; i < pts.size(); ++i) {
-        if (i)
-          lf << ",";
-        lf << "{\"x\":" << pts[i].x << ",\"y\":" << pts[i].y
-           << ",\"t\":" << pts[i].t << ",\"va\":" << pts[i].edge_va
-           << ",\"vb\":" << pts[i].edge_vb << "}";
-      }
-      lf << "]},\"timestamp\":"
-         << std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch())
-                .count()
-         << "}\n";
-    }
-  }
-  // #endregion
 
   // 3. For mesh edge (va, vb), find face(s) containing it.
   auto faces_for_edge = [&](int va, int vb) -> std::vector<size_t> {
@@ -649,33 +589,6 @@ split_contour_segment_by_faces(const CachedUVMesh &cache, double ax_mm,
     }
   }
 
-  // #region agent log
-  {
-    std::ofstream lf(
-        "/Users/anant/Documents/Personal/BambuStudio/.cursor/debug-60a69c.log",
-        std::ios::app);
-    if (lf) {
-      lf << "{\"sessionId\":\"60a69c\",\"hypothesisId\":\"H3\",\"location\":"
-            "\"FillCheckered.cpp:split_result\",\"message\":\"sub_segments "
-            "count\",\"data\":{\"result_count\":"
-         << result.size();
-      lf << ",\"segments\":[";
-      for (size_t i = 0; i < result.size(); ++i) {
-        if (i)
-          lf << ",";
-        lf << "{\"ax\":" << result[i].ax_mm << ",\"ay\":" << result[i].ay_mm
-           << ",\"bx\":" << result[i].bx_mm << ",\"by\":" << result[i].by_mm
-           << ",\"faces\":" << result[i].faces.size() << "}";
-      }
-      lf << "]},\"timestamp\":"
-         << std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch())
-                .count()
-         << "}\n";
-    }
-  }
-  // #endregion
-
   return result;
 }
 
@@ -763,12 +676,8 @@ point_to_uv(const CachedUVMesh &cache, double x_mm, double y_mm, double z_mm,
             const std::vector<size_t> *restrict_to_faces = nullptr) {
   const indexed_triangle_set &its = cache.mesh.its;
   if (its.vertices.empty() || its.indices.empty() ||
-      cache.uvs.size() != its.indices.size()) {
-    printf("No UVs found for mesh\n");
-    printf("Vertices: %zu, Indices: %zu, UVs: %zu\n", its.vertices.size(),
-           its.indices.size(), cache.uvs.size());
+      cache.uvs.size() != its.indices.size())
     return std::nullopt;
-  }
 
   // double pz = (cache.bbox_max.z() <= 0.f) ? -z_mm : z_mm;
   double pz = z_mm;
@@ -826,29 +735,22 @@ point_to_uv(const CachedUVMesh &cache, double x_mm, double y_mm, double z_mm,
   const double epsilon_sq = 1e-6;
 
   if (best_sqr_dist < 0 || best_sqr_dist > epsilon_sq) {
-    printf("Best sqr dist is not valid, retrying with full mesh\n");
     best_sqr_dist = AABBTreeIndirect::squared_distance_to_indexed_triangle_set(
         its.vertices, its.indices, cache.tree, P, hit_idx, hit_point);
   }
 
-  if (best_sqr_dist < 0 || best_sqr_dist > epsilon_sq) {
-    printf("Best sqr dist is not valid\n");
+  if (best_sqr_dist < 0 || best_sqr_dist > epsilon_sq)
     return std::nullopt;
-  }
-  if (hit_idx >= cache.uvs.size()) {
-    printf("Hit idx is out of bounds\n");
+  if (hit_idx >= cache.uvs.size())
     return std::nullopt;
-  }
 
   const Vec3i &face = its.indices[hit_idx];
   Vec3d A = its.vertices[face(0)].cast<double>();
   Vec3d B = its.vertices[face(1)].cast<double>();
   Vec3d C = its.vertices[face(2)].cast<double>();
   auto bary = barycentric_coords_3d(hit_point, A, B, C);
-  if (!bary) {
-    printf("Barycentric coords are not valid\n");
+  if (!bary)
     return std::nullopt;
-  }
 
   float w0 = (*bary)[0], w1 = (*bary)[1], w2 = (*bary)[2];
   const std::array<Vec2f, 3> &uv_arr = cache.uvs[hit_idx];
@@ -1572,6 +1474,96 @@ extract_black_contour_segments(const Polygon &contour, double z_mm,
   return result;
 }
 
+// Cast a ray from centroid through outer_pt and find where it intersects the
+// inner contour. Returns the intersection point if found.
+static bool ray_intersect_inner_contour(const Point &centroid,
+                                        const Point &outer_pt,
+                                        const Polygon &inner_contour,
+                                        Point *intersection_out) {
+  if (inner_contour.points.size() < 2)
+    return false;
+  // Ray from centroid through outer_pt. first_intersection returns the point
+  // closest to line.a (centroid), i.e. the inner boundary.
+  Line ray(centroid, outer_pt);
+  return inner_contour.first_intersection(ray, intersection_out);
+}
+
+// Project each segment endpoint of outer polylines onto the inner contour via
+// radial projection from centroid. Preserves filled flag (only filled segments
+// are in outer_polylines). Filters out segments shorter than min_segment_length_mm.
+static Polylines project_segments_radially(const Polylines &outer_polylines,
+                                           const Polygon &inner_contour,
+                                           const Point &centroid,
+                                           double min_segment_length_mm) {
+  Polylines result;
+  const coord_t min_len_sq = coord_t(scale_(min_segment_length_mm) *
+                                     scale_(min_segment_length_mm));
+  std::vector<std::pair<Point, Point>> segments;
+
+  for (const Polyline &pl : outer_polylines) {
+    if (pl.points.size() < 2)
+      continue;
+    for (size_t i = 0; i + 1 < pl.points.size(); ++i) {
+      Point proj_a, proj_b;
+      if (!ray_intersect_inner_contour(centroid, pl.points[i], inner_contour,
+                                       &proj_a))
+        continue;
+      if (!ray_intersect_inner_contour(centroid, pl.points[i + 1], inner_contour,
+                                       &proj_b))
+        continue;
+      Vec2d d = (proj_b - proj_a).cast<double>();
+      if (d.squaredNorm() >= double(min_len_sq))
+        segments.push_back({proj_a, proj_b});
+    }
+  }
+
+  // Chain consecutive segments into polylines (same logic as extract_black_contour_segments).
+  const coord_t eps2 = scale_(0.001) * scale_(0.001);
+  auto same_point = [eps2](const Point &a, const Point &b) {
+    Vec2d d = (a - b).cast<double>();
+    return d.squaredNorm() <= eps2;
+  };
+
+  std::vector<bool> used(segments.size(), false);
+  for (size_t i = 0; i < segments.size(); ++i) {
+    if (used[i])
+      continue;
+    Polyline pl;
+    pl.points.push_back(segments[i].first);
+    pl.points.push_back(segments[i].second);
+    used[i] = true;
+    bool changed;
+    do {
+      changed = false;
+      for (size_t j = 0; j < segments.size(); ++j) {
+        if (used[j])
+          continue;
+        const Point &s0 = segments[j].first, &s1 = segments[j].second;
+        if (same_point(pl.points.back(), s0)) {
+          pl.points.push_back(s1);
+          used[j] = true;
+          changed = true;
+        } else if (same_point(pl.points.back(), s1)) {
+          pl.points.push_back(s0);
+          used[j] = true;
+          changed = true;
+        } else if (same_point(pl.points.front(), s0)) {
+          pl.points.insert(pl.points.begin(), s1);
+          used[j] = true;
+          changed = true;
+        } else if (same_point(pl.points.front(), s1)) {
+          pl.points.insert(pl.points.begin(), s0);
+          used[j] = true;
+          changed = true;
+        }
+      }
+    } while (changed);
+    if (pl.points.size() >= 2)
+      result.push_back(std::move(pl));
+  }
+  return chain_polylines(std::move(result));
+}
+
 } // namespace
 
 #ifdef CHECKERED_INFILL_DEBUG_SVG
@@ -1647,9 +1639,6 @@ void FillCheckered::_fill_surface_single(
   Polygon outer_contour = expolygon.contour;
   double z_mm = this->z;
 
-  Polygon inner_contour = expolygon.holes[0];
-
-  // if(size_t(this->layer_id) == 158) {
   std::shared_ptr<CachedUVMesh> cache = get_or_load_uv_mesh(m_uv_map_file_path);
 
   if (cache && cache->valid) {
@@ -1658,91 +1647,19 @@ void FillCheckered::_fill_surface_single(
     const double ox = m_contour_to_mesh_origin_mm.x();
     const double oy = m_contour_to_mesh_origin_mm.y();
 
-    if (size_t(this->layer_id) != -20) {
-      printf("z mm: %f\n", z_mm);
+    polylines_out = extract_black_contour_segments(
+        outer_contour, z_mm, *cache, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS, ox,
+        oy, outward_offset_mm);
 
-      for (const auto &point : inner_contour.points) {
-        auto p_x = unscale_(point.x());
-        auto p_y = unscale_(point.y());
-        printf("Inner point: %f, %f\n", p_x, p_y);
-      }
-
-      // Point a = Point(3.0, 3.0);
-      // Point b = Point(3.0, 17.0);
-
-      // double ax_mm = double(a.x());
-      // double ay_mm = double(a.y());
-      // double bx_mm = double(b.x());
-      // double by_mm = double(b.y());
-      // double z_mm = 20;
-
-      // std::vector<SubSegmentWithFaces> sub_segments =
-      //     split_contour_segment_by_faces(*cache, ax_mm, ay_mm, bx_mm, by_mm,
-      //                                    z_mm);
-
-      // printf("Sub segments: %zu\n", sub_segments.size());
-      // for (const SubSegmentWithFaces &sub : sub_segments) {
-      //   printf("Sub segment: %f, %f -> %f, %f\n", sub.ax_mm, sub.ay_mm,
-      //          sub.bx_mm, sub.by_mm);
-
-      //   std::vector<size_t> faces = find_faces_for_segment(
-      //       *cache, sub.ax_mm, sub.ay_mm, sub.bx_mm, sub.by_mm, z_mm);
-
-      //   printf("Faces: %zu\n", faces.size());
-      //   for (const auto &face : faces) {
-      //     printf("Face: %zu\n", face);
-      //   }
-
-      //   auto A_uv = point_to_uv(*cache, sub.ax_mm, sub.ay_mm, z_mm, &faces);
-      //   auto B_uv = point_to_uv(*cache, sub.bx_mm, sub.by_mm, z_mm, &faces);
-      //   printf("A UV: %f, %f, B UV: %f, %f\n", A_uv->x(), A_uv->y(), B_uv->x(),
-      //          B_uv->y());
-
-      //   std::vector<UVSegmentInCell> cell_segments =
-      //       subdivide_uv_segment_by_grid(*A_uv, *B_uv, DEFAULT_GRID_COLS,
-      //                                    DEFAULT_GRID_ROWS);
-
-      //   printf("Cell segments: %zu\n", cell_segments.size());
-      //   for (const UVSegmentInCell &seg : cell_segments) {
-      //     auto grid_number =
-      //         (DEFAULT_GRID_COLS - seg.cj - 1) * DEFAULT_GRID_ROWS + seg.ci;
-      //     printf("Segment: %d - (%f, %f) -> (%f, %f)\n", grid_number,
-      //            seg.start_uv.x(), seg.start_uv.y(), seg.end_uv.x(),
-      //            seg.end_uv.y());
-      //   }
-      // }
-
-      printf("Extracting black contour segments for layer %zu\n",
-             this->layer_id);
-      polylines_out = extract_black_contour_segments(
-          outer_contour, z_mm, *cache, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS, ox,
-          oy, outward_offset_mm);
-
-      Polylines inner_polylines = extract_black_contour_segments(
-          inner_contour, z_mm, *cache, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS, ox,
-          oy, -outward_offset_mm);
-
-      polylines_out.insert(polylines_out.end(), inner_polylines.begin(), inner_polylines.end());
-
-      for (const auto &polyline : polylines_out) {
-        printf("Polyline: %zu\n", polyline.points.size());
-        for (const auto &point : polyline.points) {
-          auto p_x = unscale_(point.x());
-          auto p_y = unscale_(point.y());
-          printf("Point: %f, %f\n", p_x, p_y);
-        }
-      }
-                           
-
-      // printf("Polylines: %zu\n", polylines_out.size());
-      // for (const auto &polyline : polylines_out) {
-      //   printf("Polyline: %zu\n", polyline.points.size());
-      //   for (const auto &point : polyline.points) {
-      //     auto point_mm =
-      //         point_to_model_surface_mm(*cache, point, outward_offset_mm);
-      //     printf("Point: %d, %d\n", point_mm.x(), point_mm.y());
-      //   }
-      // }
+    if (!expolygon.holes.empty()) {
+      const Polygon &inner_contour = expolygon.holes[0];
+      Point centroid = outer_contour.centroid();
+      const double min_segment_length_mm =
+          std::max(0.2, 0.5 * unscale_(this->spacing));
+      Polylines inner_polylines = project_segments_radially(
+          polylines_out, inner_contour, centroid, min_segment_length_mm);
+      polylines_out.insert(polylines_out.end(), inner_polylines.begin(),
+                           inner_polylines.end());
     }
   }
 }
