@@ -7,6 +7,7 @@
 #include "../ShortestPath.hpp"
 #include "../TriangleMesh.hpp"
 #include "../Utils.hpp"
+#include "libslic3r/Polygon.hpp"
 
 #include <algorithm>
 #include <array>
@@ -1646,6 +1647,8 @@ void FillCheckered::_fill_surface_single(
   Polygon outer_contour = expolygon.contour;
   double z_mm = this->z;
 
+  Polygon inner_contour = expolygon.holes[0];
+
   // if(size_t(this->layer_id) == 158) {
   std::shared_ptr<CachedUVMesh> cache = get_or_load_uv_mesh(m_uv_map_file_path);
 
@@ -1655,85 +1658,91 @@ void FillCheckered::_fill_surface_single(
     const double ox = m_contour_to_mesh_origin_mm.x();
     const double oy = m_contour_to_mesh_origin_mm.y();
 
-    if (size_t(this->layer_id) != -50) {
+    if (size_t(this->layer_id) != -20) {
       printf("z mm: %f\n", z_mm);
 
-      // for (size_t i = 0; i < outer_contour.points.size(); ++i) {
-      //   z_mm = 20.0;
-      //   auto point_mm = point_to_model_surface_mm(*cache,
-      //   outer_contour.points[i], outward_offset_mm); printf("Point mm: %d,
-      //   %d\n", point_mm.x(), point_mm.y()); auto uv = point_to_uv(*cache,
-      //   point_mm.x(), point_mm.y(), z_mm); if (uv) {
-      //     auto grid_cell = uv_to_grid_cell(uv->x(), uv->y(),
-      //     DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS); printf("Grid cell: %i,
-      //     %i\n", grid_cell.first, grid_cell.second); auto grid_number =
-      //     (DEFAULT_GRID_COLS - grid_cell.second - 1) * DEFAULT_GRID_ROWS +
-      //     grid_cell.first; printf("Grid number: %i\n", grid_number);
-      //   } else {
-      //     printf("No UV found for point %zu\n", i);
+      for (const auto &point : inner_contour.points) {
+        auto p_x = unscale_(point.x());
+        auto p_y = unscale_(point.y());
+        printf("Inner point: %f, %f\n", p_x, p_y);
+      }
+
+      // Point a = Point(3.0, 3.0);
+      // Point b = Point(3.0, 17.0);
+
+      // double ax_mm = double(a.x());
+      // double ay_mm = double(a.y());
+      // double bx_mm = double(b.x());
+      // double by_mm = double(b.y());
+      // double z_mm = 20;
+
+      // std::vector<SubSegmentWithFaces> sub_segments =
+      //     split_contour_segment_by_faces(*cache, ax_mm, ay_mm, bx_mm, by_mm,
+      //                                    z_mm);
+
+      // printf("Sub segments: %zu\n", sub_segments.size());
+      // for (const SubSegmentWithFaces &sub : sub_segments) {
+      //   printf("Sub segment: %f, %f -> %f, %f\n", sub.ax_mm, sub.ay_mm,
+      //          sub.bx_mm, sub.by_mm);
+
+      //   std::vector<size_t> faces = find_faces_for_segment(
+      //       *cache, sub.ax_mm, sub.ay_mm, sub.bx_mm, sub.by_mm, z_mm);
+
+      //   printf("Faces: %zu\n", faces.size());
+      //   for (const auto &face : faces) {
+      //     printf("Face: %zu\n", face);
+      //   }
+
+      //   auto A_uv = point_to_uv(*cache, sub.ax_mm, sub.ay_mm, z_mm, &faces);
+      //   auto B_uv = point_to_uv(*cache, sub.bx_mm, sub.by_mm, z_mm, &faces);
+      //   printf("A UV: %f, %f, B UV: %f, %f\n", A_uv->x(), A_uv->y(), B_uv->x(),
+      //          B_uv->y());
+
+      //   std::vector<UVSegmentInCell> cell_segments =
+      //       subdivide_uv_segment_by_grid(*A_uv, *B_uv, DEFAULT_GRID_COLS,
+      //                                    DEFAULT_GRID_ROWS);
+
+      //   printf("Cell segments: %zu\n", cell_segments.size());
+      //   for (const UVSegmentInCell &seg : cell_segments) {
+      //     auto grid_number =
+      //         (DEFAULT_GRID_COLS - seg.cj - 1) * DEFAULT_GRID_ROWS + seg.ci;
+      //     printf("Segment: %d - (%f, %f) -> (%f, %f)\n", grid_number,
+      //            seg.start_uv.x(), seg.start_uv.y(), seg.end_uv.x(),
+      //            seg.end_uv.y());
       //   }
       // }
-
-      Point a = Point(40.0, 0.0);
-      Point b = Point(40.0, 20.0);
-
-      double ax_mm = double(a.x());
-      double ay_mm = double(a.y());
-      double bx_mm = double(b.x());
-      double by_mm = double(b.y());
-      // double z_mm = 10.200000;
-
-      std::vector<SubSegmentWithFaces> sub_segments =
-          split_contour_segment_by_faces(*cache, ax_mm, ay_mm, bx_mm, by_mm,
-                                         z_mm);
-
-      printf("Sub segments: %zu\n", sub_segments.size());
-      for (const SubSegmentWithFaces &sub : sub_segments) {
-        printf("Sub segment: %f, %f -> %f, %f\n", sub.ax_mm, sub.ay_mm,
-               sub.bx_mm, sub.by_mm);
-
-        std::vector<size_t> faces = find_faces_for_segment(
-            *cache, sub.ax_mm, sub.ay_mm, sub.bx_mm, sub.by_mm, z_mm);
-
-        printf("Faces: %zu\n", faces.size());
-        for (const auto &face : faces) {
-          printf("Face: %zu\n", face);
-        }
-
-        auto A_uv = point_to_uv(*cache, sub.ax_mm, sub.ay_mm, z_mm, &faces);
-        auto B_uv = point_to_uv(*cache, sub.bx_mm, sub.by_mm, z_mm, &faces);
-        printf("A UV: %f, %f, B UV: %f, %f\n", A_uv->x(), A_uv->y(), B_uv->x(),
-               B_uv->y());
-
-        std::vector<UVSegmentInCell> cell_segments =
-            subdivide_uv_segment_by_grid(*A_uv, *B_uv, DEFAULT_GRID_COLS,
-                                         DEFAULT_GRID_ROWS);
-
-
-        printf("Cell segments: %zu\n", cell_segments.size());
-        for (const UVSegmentInCell &seg : cell_segments) {
-          auto grid_number =
-              (DEFAULT_GRID_COLS - seg.cj - 1) * DEFAULT_GRID_ROWS + seg.ci;
-          printf("Segment: %d - (%f, %f) -> (%f, %f)\n", grid_number,
-                 seg.start_uv.x(), seg.start_uv.y(), seg.end_uv.x(),
-                 seg.end_uv.y());
-        }
-      }
 
       printf("Extracting black contour segments for layer %zu\n",
              this->layer_id);
       polylines_out = extract_black_contour_segments(
           outer_contour, z_mm, *cache, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS, ox,
           oy, outward_offset_mm);
-      printf("Polylines: %zu\n", polylines_out.size());
+
+      Polylines inner_polylines = extract_black_contour_segments(
+          inner_contour, z_mm, *cache, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS, ox,
+          oy, -outward_offset_mm);
+
+      polylines_out.insert(polylines_out.end(), inner_polylines.begin(), inner_polylines.end());
+
       for (const auto &polyline : polylines_out) {
         printf("Polyline: %zu\n", polyline.points.size());
         for (const auto &point : polyline.points) {
-          auto point_mm =
-              point_to_model_surface_mm(*cache, point, outward_offset_mm);
-          printf("Point: %d, %d\n", point_mm.x(), point_mm.y());
+          auto p_x = unscale_(point.x());
+          auto p_y = unscale_(point.y());
+          printf("Point: %f, %f\n", p_x, p_y);
         }
       }
+                           
+
+      // printf("Polylines: %zu\n", polylines_out.size());
+      // for (const auto &polyline : polylines_out) {
+      //   printf("Polyline: %zu\n", polyline.points.size());
+      //   for (const auto &point : polyline.points) {
+      //     auto point_mm =
+      //         point_to_model_surface_mm(*cache, point, outward_offset_mm);
+      //     printf("Point: %d, %d\n", point_mm.x(), point_mm.y());
+      //   }
+      // }
     }
   }
 }
