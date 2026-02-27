@@ -2,6 +2,7 @@
 
 #include "../AABBTreeIndirect.hpp"
 #include "../Format/OBJ.hpp"
+#include "../Line.hpp"
 #include "../Point.hpp"
 #include "../SVG.hpp"
 #include "../ShortestPath.hpp"
@@ -1488,17 +1489,106 @@ static bool ray_intersect_inner_contour(const Point &centroid,
   return inner_contour.first_intersection(ray, intersection_out);
 }
 
+// Find which polygon edge (0..n-1) the point lies on. Returns -1 if not on contour.
+static int find_edge_for_point(const Polygon &contour, const Point &pt) {
+  const size_t n = contour.points.size();
+  if (n < 2)
+    return -1;
+  const double eps2 = double(scale_(0.001)) * scale_(0.001);
+  int best = -1;
+  double best_d2 = std::numeric_limits<double>::max();
+  for (size_t i = 0; i < n; ++i) {
+    const Point &a = contour.points[i];
+    const Point &b = contour.points[(i + 1) % n];
+    Line seg(a, b);
+    Point nearest;
+    double d2 = line_alg::distance_to_squared(seg, pt, &nearest);
+    if (d2 < best_d2 && d2 <= eps2) {
+      best_d2 = d2;
+      best = int(i);
+    }
+  }
+  return best;
+}
+
+// Path from a to b along the contour (shorter arc). All points lie on the contour.
+static Polyline path_along_contour(const Polygon &contour, const Point &a,
+                                   const Point &b) {
+  const size_t n = contour.points.size();
+  if (n < 2)
+    return Polyline();
+
+  const coord_t eps2 = scale_(0.001) * scale_(0.001);
+  auto same_pt = [eps2](const Point &p, const Point &q) {
+    return (p - q).cast<double>().squaredNorm() <= eps2;
+  };
+  if (same_pt(a, b))
+    return Polyline{a};
+
+  int ei = find_edge_for_point(contour, a);
+  int ej = find_edge_for_point(contour, b);
+  if (ei < 0 || ej < 0)
+    return Polyline();
+
+  if (ei == ej) {
+    return Polyline{a, b};
+  }
+
+  // Compute arc lengths: forward from vertex (ei+1)%n to ej, backward from ei to (ej+1)%n.
+  auto arc_length_forward = [&]() -> double {
+    double len = 0;
+    for (size_t i = (ei + 1) % n;; i = (i + 1) % n) {
+      len += (contour.points[(i + 1) % n] - contour.points[i])
+                 .cast<double>()
+                 .norm();
+      if ((i + 1) % n == size_t(ej))
+        break;
+    }
+    return len;
+  };
+  auto arc_length_backward = [&]() -> double {
+    double len = 0;
+    for (size_t i = ei;; i = (i + n - 1) % n) {
+      len += (contour.points[i] - contour.points[(i + n - 1) % n])
+                 .cast<double>()
+                 .norm();
+      if (i == (ej + 1) % n)
+        break;
+    }
+    return len;
+  };
+  double len_fwd = arc_length_forward();
+  double len_bwd = arc_length_backward();
+
+  Polyline path;
+  path.points.push_back(a);
+  if (len_fwd <= len_bwd) {
+    for (size_t k = (ei + 1) % n;; k = (k + 1) % n) {
+      path.points.push_back(contour.points[k]);
+      if (k == size_t(ej))
+        break;
+    }
+  } else {
+    for (size_t k = ei;; k = (k + n - 1) % n) {
+      path.points.push_back(contour.points[k]);
+      if (k == (ej + 1) % n)
+        break;
+    }
+  }
+  path.points.push_back(b);
+  return path;
+}
+
 // Project each segment endpoint of outer polylines onto the inner contour via
-// radial projection from centroid. Preserves filled flag (only filled segments
-// are in outer_polylines). Filters out segments shorter than min_segment_length_mm.
+// radial projection from centroid. All points and segments lie on the inner
+// contour. Preserves filled flag. Filters by min path length.
 static Polylines project_segments_radially(const Polylines &outer_polylines,
                                            const Polygon &inner_contour,
                                            const Point &centroid,
                                            double min_segment_length_mm) {
   Polylines result;
-  const coord_t min_len_sq = coord_t(scale_(min_segment_length_mm) *
-                                     scale_(min_segment_length_mm));
-  std::vector<std::pair<Point, Point>> segments;
+  const double min_len = scale_(min_segment_length_mm);
+  std::vector<Polyline> paths;
 
   for (const Polyline &pl : outer_polylines) {
     if (pl.points.size() < 2)
@@ -1511,48 +1601,54 @@ static Polylines project_segments_radially(const Polylines &outer_polylines,
       if (!ray_intersect_inner_contour(centroid, pl.points[i + 1], inner_contour,
                                        &proj_b))
         continue;
-      Vec2d d = (proj_b - proj_a).cast<double>();
-      if (d.squaredNorm() >= double(min_len_sq))
-        segments.push_back({proj_a, proj_b});
+      proj_a = inner_contour.point_projection(proj_a);
+      proj_b = inner_contour.point_projection(proj_b);
+
+      Polyline path = path_along_contour(inner_contour, proj_a, proj_b);
+      if (path.length() >= min_len && path.points.size() >= 2)
+        paths.push_back(std::move(path));
     }
   }
 
-  // Chain consecutive segments into polylines (same logic as extract_black_contour_segments).
   const coord_t eps2 = scale_(0.001) * scale_(0.001);
   auto same_point = [eps2](const Point &a, const Point &b) {
     Vec2d d = (a - b).cast<double>();
     return d.squaredNorm() <= eps2;
   };
 
-  std::vector<bool> used(segments.size(), false);
-  for (size_t i = 0; i < segments.size(); ++i) {
+  std::vector<bool> used(paths.size(), false);
+  for (size_t i = 0; i < paths.size(); ++i) {
     if (used[i])
       continue;
-    Polyline pl;
-    pl.points.push_back(segments[i].first);
-    pl.points.push_back(segments[i].second);
+    Polyline pl = std::move(paths[i]);
     used[i] = true;
     bool changed;
     do {
       changed = false;
-      for (size_t j = 0; j < segments.size(); ++j) {
+      for (size_t j = 0; j < paths.size(); ++j) {
         if (used[j])
           continue;
-        const Point &s0 = segments[j].first, &s1 = segments[j].second;
-        if (same_point(pl.points.back(), s0)) {
-          pl.points.push_back(s1);
+        const Polyline &p = paths[j];
+        if (p.points.size() < 2)
+          continue;
+        if (same_point(pl.points.back(), p.points.front())) {
+          for (size_t k = 1; k < p.points.size(); ++k)
+            pl.points.push_back(p.points[k]);
           used[j] = true;
           changed = true;
-        } else if (same_point(pl.points.back(), s1)) {
-          pl.points.push_back(s0);
+        } else if (same_point(pl.points.back(), p.points.back())) {
+          for (size_t k = p.points.size() - 1; k-- > 0;)
+            pl.points.push_back(p.points[k]);
           used[j] = true;
           changed = true;
-        } else if (same_point(pl.points.front(), s0)) {
-          pl.points.insert(pl.points.begin(), s1);
+        } else if (same_point(pl.points.front(), p.points.back())) {
+          for (size_t k = p.points.size() - 1; k-- > 0;)
+            pl.points.insert(pl.points.begin(), p.points[k]);
           used[j] = true;
           changed = true;
-        } else if (same_point(pl.points.front(), s1)) {
-          pl.points.insert(pl.points.begin(), s0);
+        } else if (same_point(pl.points.front(), p.points.front())) {
+          for (size_t k = 1; k < p.points.size(); ++k)
+            pl.points.insert(pl.points.begin(), p.points[k]);
           used[j] = true;
           changed = true;
         }
