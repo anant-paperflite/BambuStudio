@@ -1591,6 +1591,152 @@ static Polyline path_along_contour(const Polygon &contour, const Point &a,
   return path;
 }
 
+// Build (outer segment, inner path) pairs in order: one pair per outer segment.
+// Inner path is empty (no points) when projection fails or path is too short.
+static std::vector<std::pair<Polyline, Polyline>>
+compute_outer_inner_segment_pairs(const Polylines &outer_polylines,
+                                  const Polygon &inner_contour,
+                                  const Point &centroid,
+                                  double min_segment_length_mm) {
+  std::vector<std::pair<Polyline, Polyline>> pairs;
+  const double min_len = scale_(min_segment_length_mm);
+
+  for (const Polyline &pl : outer_polylines) {
+    if (pl.points.size() < 2)
+      continue;
+    for (size_t i = 0; i + 1 < pl.points.size(); ++i) {
+      Polyline outer_seg;
+      outer_seg.points.push_back(pl.points[i]);
+      outer_seg.points.push_back(pl.points[i + 1]);
+
+      Point proj_a, proj_b;
+      if (!ray_intersect_inner_contour(centroid, pl.points[i], inner_contour,
+                                      &proj_a) ||
+          !ray_intersect_inner_contour(centroid, pl.points[i + 1], inner_contour,
+                                      &proj_b)) {
+        pairs.push_back({std::move(outer_seg), Polyline{}});
+        continue;
+      }
+      proj_a = inner_contour.point_projection(proj_a);
+      proj_b = inner_contour.point_projection(proj_b);
+
+      Polyline inner_path = path_along_contour(inner_contour, proj_a, proj_b);
+      if (inner_path.length() < min_len || inner_path.points.size() < 2)
+        inner_path.points.clear();
+      pairs.push_back({std::move(outer_seg), std::move(inner_path)});
+    }
+  }
+  return pairs;
+}
+
+// Build one continuous polyline: O1 → connect → I2 → connect → O2 → … → I_N → connect → O_N.
+// Inner segment 1 is never drawn. Connections are straight-line travel (one point).
+static Polylines build_alternating_outer_inner_polyline(
+    const std::vector<std::pair<Polyline, Polyline>> &pairs) {
+  Polylines result;
+  if (pairs.empty())
+    return result;
+
+  const coord_t eps2 = scale_(0.001) * scale_(0.001);
+  auto same_point = [eps2](const Point &a, const Point &b) {
+    Vec2d d = (a - b).cast<double>();
+    return d.squaredNorm() <= eps2;
+  };
+
+  Polyline out;
+  auto append_point = [&out, &same_point](const Point &p) {
+    if (out.points.empty() || !same_point(out.points.back(), p))
+      out.points.push_back(p);
+  };
+  const size_t N = pairs.size();
+
+  for (size_t k = 0; k < N; ++k) {
+    const Polyline &outer_seg = pairs[k].first;
+    if (outer_seg.points.size() < 2)
+      continue;
+
+    if (out.points.empty()) {
+      out.points.push_back(outer_seg.points.front());
+      out.points.push_back(outer_seg.points.back());
+    } else {
+      append_point(outer_seg.points.front());
+      append_point(outer_seg.points.back());
+    }
+
+    if (k < N - 1) {
+      const Polyline &next_inner = pairs[k + 1].second;
+      const Polyline &next_outer = pairs[k + 1].first;
+      const Point &next_outer_start = next_outer.points.front();
+
+      if (!next_inner.points.empty() && next_inner.points.size() >= 2) {
+        const Point &inner_start = next_inner.points.front();
+        const Point &inner_end = next_inner.points.back();
+        append_point(inner_start);
+        for (size_t i = 1; i < next_inner.points.size(); ++i)
+          append_point(next_inner.points[i]);
+        append_point(next_outer_start);
+      } else {
+        append_point(next_outer_start);
+      }
+    }
+  }
+
+  if (out.points.size() >= 2)
+    result.push_back(std::move(out));
+  return result;
+}
+
+// Build one continuous polyline: I1 → connect → O2 → connect → I2 → connect → O3 → … → I_N.
+// Used when layer_id % 2 == 1 to alternate connection direction vs outer-first pattern.
+static Polylines build_alternating_inner_outer_polyline(
+    const std::vector<std::pair<Polyline, Polyline>> &pairs) {
+  Polylines result;
+  if (pairs.empty())
+    return result;
+
+  const coord_t eps2 = scale_(0.001) * scale_(0.001);
+  auto same_point = [eps2](const Point &a, const Point &b) {
+    Vec2d d = (a - b).cast<double>();
+    return d.squaredNorm() <= eps2;
+  };
+
+  Polyline out;
+  auto append_point = [&out, &same_point](const Point &p) {
+    if (out.points.empty() || !same_point(out.points.back(), p))
+      out.points.push_back(p);
+  };
+  const size_t N = pairs.size();
+
+  // Start with Inner segment 1 (pairs[0].second).
+  const Polyline &inner1 = pairs[0].second;
+  if (!inner1.points.empty() && inner1.points.size() >= 2) {
+    out.points.push_back(inner1.points.front());
+    for (size_t i = 1; i < inner1.points.size(); ++i)
+      append_point(inner1.points[i]);
+  }
+
+  // Then for k = 1 .. N-1: connect to Outer k+1, then Inner k+1.
+  for (size_t k = 1; k < N; ++k) {
+    const Polyline &outer_seg = pairs[k].first;
+    const Polyline &inner_seg = pairs[k].second;
+
+    if (outer_seg.points.size() >= 2) {
+      append_point(outer_seg.points.front());
+      for (size_t i = 1; i < outer_seg.points.size(); ++i)
+        append_point(outer_seg.points[i]);
+    }
+    if (!inner_seg.points.empty() && inner_seg.points.size() >= 2) {
+      append_point(inner_seg.points.front());
+      for (size_t i = 1; i < inner_seg.points.size(); ++i)
+        append_point(inner_seg.points[i]);
+    }
+  }
+
+  if (out.points.size() >= 2)
+    result.push_back(std::move(out));
+  return result;
+}
+
 // Project each segment endpoint of outer polylines onto the inner contour via
 // radial projection from centroid. All points and segments lie on the inner
 // contour. Preserves filled flag. Filters by min path length.
@@ -1747,6 +1893,8 @@ void FillCheckered::_fill_surface_single(
   Polygon outer_contour = expolygon.contour;
   double z_mm = this->z;
 
+  
+
   std::shared_ptr<CachedUVMesh> cache = get_or_load_uv_mesh(m_uv_map_file_path);
 
   if (cache && cache->valid) {
@@ -1764,10 +1912,14 @@ void FillCheckered::_fill_surface_single(
       Point centroid = outer_contour.centroid();
       const double min_segment_length_mm =
           std::max(0.2, 0.5 * unscale_(this->spacing));
-      Polylines inner_polylines = project_segments_radially(
-          polylines_out, inner_contour, centroid, min_segment_length_mm);
-      polylines_out.insert(polylines_out.end(), inner_polylines.begin(),
-                           inner_polylines.end());
+      std::vector<std::pair<Polyline, Polyline>> pairs =
+          compute_outer_inner_segment_pairs(
+              polylines_out, inner_contour, centroid, min_segment_length_mm);
+      // Alternate connection pattern by layer: even layers O1→I2→O2→…; odd layers I1→O2→I2→….
+      if (this->layer_id != size_t(-1) && (this->layer_id % 2) == 1)
+        polylines_out = build_alternating_inner_outer_polyline(pairs);
+      else
+        polylines_out = build_alternating_outer_inner_polyline(pairs);
     }
   }
 }
