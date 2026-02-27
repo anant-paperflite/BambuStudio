@@ -1490,16 +1490,28 @@ static bool ray_intersect_inner_contour(const Point &centroid,
 }
 
 // Find which polygon edge (0..n-1) the point lies on. Returns -1 if not on contour.
+// Only accepts an edge when the point's projection onto the segment lies in [0,1],
+// so a point past the segment (e.g. on the next edge near the vertex) is not
+// assigned to this edge.
 static int find_edge_for_point(const Polygon &contour, const Point &pt) {
   const size_t n = contour.points.size();
   if (n < 2)
     return -1;
   const double eps2 = double(scale_(0.001)) * scale_(0.001);
+  constexpr double t_eps = 1e-6;
   int best = -1;
   double best_d2 = std::numeric_limits<double>::max();
   for (size_t i = 0; i < n; ++i) {
     const Point &a = contour.points[i];
     const Point &b = contour.points[(i + 1) % n];
+    Vec2d v = (b - a).cast<double>();
+    Vec2d va = (pt - a).cast<double>();
+    double l2 = v.squaredNorm();
+    if (l2 < 1e-20)
+      continue;
+    double t = va.dot(v) / l2;
+    if (t < -t_eps || t > 1.0 + t_eps)
+      continue;
     Line seg(a, b);
     Point nearest;
     double d2 = line_alg::distance_to_squared(seg, pt, &nearest);
@@ -1534,14 +1546,14 @@ static Polyline path_along_contour(const Polygon &contour, const Point &a,
     return Polyline{a, b};
   }
 
-  // Compute arc lengths: forward from vertex (ei+1)%n to ej, backward from ei to (ej+1)%n.
+  // Compute arc lengths: forward from vertex (ei+1)%n through edge ej, backward from ei through (ej+1)%n.
   auto arc_length_forward = [&]() -> double {
     double len = 0;
     for (size_t i = (ei + 1) % n;; i = (i + 1) % n) {
       len += (contour.points[(i + 1) % n] - contour.points[i])
                  .cast<double>()
                  .norm();
-      if ((i + 1) % n == size_t(ej))
+      if (i == size_t(ej))
         break;
     }
     return len;
