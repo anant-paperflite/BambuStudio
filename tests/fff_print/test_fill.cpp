@@ -5,9 +5,11 @@
 
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/Fill/Fill.hpp"
+#include "libslic3r/Fill/FillCheckered.hpp"
 #include "libslic3r/Flow.hpp"
 #include "libslic3r/Geometry.hpp"
 #include "libslic3r/Print.hpp"
+#include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/SVG.hpp"
 #include "libslic3r/libslic3r.h"
 
@@ -187,6 +189,107 @@ TEST_CASE("Fill: Pattern Path Length", "[Fill]") {
         Slic3r::ExPolygon expolygon(points);
          
         REQUIRE(test_if_solid_surface_filled(expolygon, 0.5, 45.0, 0.99) == true);
+    }
+}
+
+TEST_CASE("Fill: Checkered no UV map returns empty", "[Fill]") {
+    std::unique_ptr<Fill> filler(Fill::new_from_type(ipCheckered));
+    REQUIRE(filler != nullptr);
+    FillCheckered *fc = dynamic_cast<FillCheckered *>(filler.get());
+    REQUIRE(fc != nullptr);
+    fc->set_uv_map_file_path("");
+    fc->set_contour_to_mesh_origin_mm(0., 0.);
+
+    Slic3r::Points square = {
+        Point::new_scale(0, 0),
+        Point::new_scale(100, 0),
+        Point::new_scale(100, 100),
+        Point::new_scale(0, 100),
+    };
+    ExPolygon expolygon(square);
+    fc->bounding_box = get_extents(expolygon.contour);
+    fc->spacing     = 1.0;
+    fc->layer_id    = 0;
+    fc->z           = 0.2;
+
+    FillParams fill_params;
+    fill_params.density = 1.0;
+    fill_params.dont_adjust = true;
+    Surface surface(stTop, expolygon);
+    Polylines paths = filler->fill_surface(&surface, fill_params);
+    REQUIRE(paths.empty());
+}
+
+TEST_CASE("Fill: Checkered with hole and no UV map returns empty", "[Fill]") {
+    std::unique_ptr<Fill> filler(Fill::new_from_type(ipCheckered));
+    REQUIRE(filler != nullptr);
+    FillCheckered *fc = dynamic_cast<FillCheckered *>(filler.get());
+    REQUIRE(fc != nullptr);
+    fc->set_uv_map_file_path("");
+    fc->set_contour_to_mesh_origin_mm(0., 0.);
+
+    Slic3r::Points outer = {
+        Point::new_scale(0, 0),
+        Point::new_scale(100, 0),
+        Point::new_scale(100, 100),
+        Point::new_scale(0, 100),
+    };
+    Slic3r::Points hole = {
+        Point::new_scale(25, 25),
+        Point::new_scale(75, 25),
+        Point::new_scale(75, 75),
+        Point::new_scale(25, 75),
+    };
+    std::reverse(hole.begin(), hole.end());
+    ExPolygon expolygon(outer, hole);
+    fc->bounding_box = get_extents(expolygon.contour);
+    fc->spacing     = 1.0;
+    fc->layer_id    = 0;
+    fc->z           = 0.2;
+
+    FillParams fill_params;
+    fill_params.density = 1.0;
+    fill_params.dont_adjust = true;
+    Surface surface(stTop, expolygon);
+    Polylines paths = filler->fill_surface(&surface, fill_params);
+    REQUIRE(paths.empty());
+}
+
+TEST_CASE("Fill: Checkered layer_id alternation does not crash", "[Fill]") {
+    std::unique_ptr<Fill> filler(Fill::new_from_type(ipCheckered));
+    REQUIRE(filler != nullptr);
+    FillCheckered *fc = dynamic_cast<FillCheckered *>(filler.get());
+    REQUIRE(fc != nullptr);
+    fc->set_uv_map_file_path("");
+    fc->set_contour_to_mesh_origin_mm(0., 0.);
+
+    Slic3r::Points outer = {
+        Point::new_scale(0, 0),
+        Point::new_scale(100, 0),
+        Point::new_scale(100, 100),
+        Point::new_scale(0, 100),
+    };
+    Slic3r::Points hole = {
+        Point::new_scale(40, 40),
+        Point::new_scale(60, 40),
+        Point::new_scale(60, 60),
+        Point::new_scale(40, 60),
+    };
+    std::reverse(hole.begin(), hole.end());
+    ExPolygon expolygon(outer, hole);
+    fc->bounding_box = get_extents(expolygon.contour);
+    fc->spacing     = 1.0;
+    fc->z           = 0.2;
+
+    FillParams fill_params;
+    fill_params.density = 1.0;
+    fill_params.dont_adjust = true;
+    Surface surface(stTop, expolygon);
+
+    for (size_t layer_id : {0, 1, 2}) {
+        fc->layer_id = layer_id;
+        Polylines paths = filler->fill_surface(&surface, fill_params);
+        REQUIRE(paths.empty());
     }
 }
 

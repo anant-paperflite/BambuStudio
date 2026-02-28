@@ -35,8 +35,8 @@ namespace {
 
 // Default grid resolution for UV space [0,1]^2 (12 cells per row/column,
 // indices 0..11).
-constexpr int DEFAULT_GRID_COLS = 40;
-constexpr int DEFAULT_GRID_ROWS = 24;
+constexpr int DEFAULT_GRID_COLS = 12;
+constexpr int DEFAULT_GRID_ROWS = 12;
 
 struct CachedUVMesh {
   TriangleMesh mesh;
@@ -1475,6 +1475,39 @@ extract_black_contour_segments(const Polygon &contour, double z_mm,
   return result;
 }
 
+// Sort polylines so the first point of the first segment is in a consistent
+// place across layers (by angle from ref). Orient each polyline so the end
+// with the smaller angle from ref is the start. Uses ref as origin (e.g.
+// contour centroid).
+static void sort_polylines_by_angle_from_ref(Polylines &polylines,
+                                             const Point &ref) {
+  if (polylines.empty())
+    return;
+  auto angle_from_ref = [&ref](const Point &p) {
+    return std::atan2(double(p.y() - ref.y()), double(p.x() - ref.x()));
+  };
+  for (Polyline &pl : polylines) {
+    if (pl.points.size() < 2)
+      continue;
+    double a_front = angle_from_ref(pl.points.front());
+    double a_back  = angle_from_ref(pl.points.back());
+    if (a_back < a_front)
+      pl.reverse();
+  }
+  std::sort(polylines.begin(), polylines.end(),
+            [&angle_from_ref](const Polyline &a, const Polyline &b) {
+              if (a.points.empty())
+                return !b.points.empty();
+              if (b.points.empty())
+                return false;
+              double a_key = std::min(angle_from_ref(a.points.front()),
+                                     angle_from_ref(a.points.back()));
+              double b_key = std::min(angle_from_ref(b.points.front()),
+                                     angle_from_ref(b.points.back()));
+              return a_key < b_key;
+            });
+}
+
 // Cast a ray from centroid through outer_pt and find where it intersects the
 // inner contour. Returns the intersection point if found.
 static bool ray_intersect_inner_contour(const Point &centroid,
@@ -1906,6 +1939,7 @@ void FillCheckered::_fill_surface_single(
     polylines_out = extract_black_contour_segments(
         outer_contour, z_mm, *cache, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS, ox,
         oy, outward_offset_mm);
+    sort_polylines_by_angle_from_ref(polylines_out, outer_contour.centroid());
 
     if (!expolygon.holes.empty()) {
       const Polygon &inner_contour = expolygon.holes[0];
@@ -1915,7 +1949,7 @@ void FillCheckered::_fill_surface_single(
       std::vector<std::pair<Polyline, Polyline>> pairs =
           compute_outer_inner_segment_pairs(
               polylines_out, inner_contour, centroid, min_segment_length_mm);
-              
+
        if (this->layer_id != size_t(-1) && (this->layer_id % 2) == 1)
         polylines_out = build_alternating_inner_outer_polyline(pairs);
       else
