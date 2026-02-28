@@ -35,8 +35,8 @@ namespace {
 
 // Default grid resolution for UV space [0,1]^2 (12 cells per row/column,
 // indices 0..11).
-constexpr int DEFAULT_GRID_COLS = 12;
-constexpr int DEFAULT_GRID_ROWS = 12;
+constexpr int DEFAULT_GRID_COLS = 40;
+constexpr int DEFAULT_GRID_ROWS = 24;
 
 struct CachedUVMesh {
   TriangleMesh mesh;
@@ -1915,8 +1915,8 @@ void FillCheckered::_fill_surface_single(
       std::vector<std::pair<Polyline, Polyline>> pairs =
           compute_outer_inner_segment_pairs(
               polylines_out, inner_contour, centroid, min_segment_length_mm);
-      // Alternate connection pattern by layer: even layers O1→I2→O2→…; odd layers I1→O2→I2→….
-      if (this->layer_id != size_t(-1) && (this->layer_id % 2) == 1)
+              
+       if (this->layer_id != size_t(-1) && (this->layer_id % 2) == 1)
         polylines_out = build_alternating_inner_outer_polyline(pairs);
       else
         polylines_out = build_alternating_outer_inner_polyline(pairs);
