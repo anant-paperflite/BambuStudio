@@ -20,11 +20,18 @@
 #include <numeric>
 #include <optional>
 #include <sstream>
+#include <tuple>
 #include <string>
 
 // Enable to write debug SVGs (XY segments and UV-space segments) to
 // g_data_dir/SVG/
-#define CHECKERED_INFILL_DEBUG_SVG
+// #define CHECKERED_INFILL_DEBUG_SVG
+
+// Enable to write final polylines_out to SVG for debugging (g_data_dir/SVG/).
+// #define CHECKERED_INFILL_DEBUG_POLYLINES_SVG
+
+// Enable to write outer/inner segment pairs to SVG (one color per pair).
+#define CHECKERED_INFILL_DEBUG_PAIRS_SVG
 
 // Enable to print faces, vertices (mm), UV islands, and per-island grid spans
 #define CHECKERED_INFILL_DEBUG_PRINT
@@ -338,7 +345,8 @@ static std::vector<size_t> find_faces_for_segment(const CachedUVMesh &cache,
     double tx0 = pts[0].first, ty0 = pts[0].second;
     double tx1 = pts[1].first, ty1 = pts[1].second;
 
-    // Require contour segment AB to overlap triangle intersection CD.
+    // Require contour segment AB to overlap triangle intersection (segment CD
+    // or 2D triangle when plane cuts all three edges).
     constexpr double eps_par = 1e-12;
     constexpr double eps_t = 1e-9;
     constexpr double eps_on = 1e-6;
@@ -346,7 +354,30 @@ static std::vector<size_t> find_faces_for_segment(const CachedUVMesh &cache,
         (ax_mm - bx_mm) * (ty0 - ty1) - (ay_mm - by_mm) * (tx0 - tx1);
     bool overlap = false;
     double t_a = 0, t_b = 0;
-    if (std::abs(denom) <= eps_par) {
+    if (pts.size() >= 3) {
+      // Plane intersection is a triangle. Accept if both A and B are inside
+      // or on the boundary of the 2D triangle.
+      double tx2 = pts[2].first, ty2 = pts[2].second;
+      auto point_in_triangle_2d = [](double px, double py, double x0, double y0,
+                                    double x1, double y1, double x2, double y2,
+                                    double eps_cross) {
+        auto cross = [](double ox, double oy, double ax, double ay, double bx,
+                       double by) {
+          return (ax - ox) * (by - oy) - (ay - oy) * (bx - ox);
+        };
+        double c0 = cross(x0, y0, x1, y1, px, py);
+        double c1 = cross(x1, y1, x2, y2, px, py);
+        double c2 = cross(x2, y2, x0, y0, px, py);
+        return (c0 >= -eps_cross && c1 >= -eps_cross && c2 >= -eps_cross) ||
+               (c0 <= eps_cross && c1 <= eps_cross && c2 <= eps_cross);
+      };
+      overlap =
+          point_in_triangle_2d(ax_mm, ay_mm, tx0, ty0, tx1, ty1, tx2, ty2,
+                              eps_on) &&
+          point_in_triangle_2d(bx_mm, by_mm, tx0, ty0, tx1, ty1, tx2, ty2,
+                               eps_on);
+    }
+    if (!overlap && std::abs(denom) <= eps_par) {
       double dx_cd = tx1 - tx0, dy_cd = ty1 - ty0;
       double len_sq = dx_cd * dx_cd + dy_cd * dy_cd;
       if (len_sq >= eps_par) {
@@ -366,6 +397,32 @@ static std::vector<size_t> find_faces_for_segment(const CachedUVMesh &cache,
         overlap =
             (ax_mm - tx0) * (ax_mm - tx0) + (ay_mm - ty0) * (ay_mm - ty0) <
             eps_par;
+      }
+    }
+    // Fallback: segment lies in interior of face (no edge on plane). Accept if
+    // the segment midpoint is inside the face's 2D intersection (segment or
+    // triangle).
+    if (!overlap) {
+      if (pts.size() >= 3) {
+        double tx2 = pts[2].first, ty2 = pts[2].second;
+        auto cross = [](double ox, double oy, double ax, double ay, double bx,
+                       double by) {
+          return (ax - ox) * (by - oy) - (ay - oy) * (bx - ox);
+        };
+        double c0 = cross(tx0, ty0, tx1, ty1, mid_x, mid_y);
+        double c1 = cross(tx1, ty1, tx2, ty2, mid_x, mid_y);
+        double c2 = cross(tx2, ty2, tx0, ty0, mid_x, mid_y);
+        overlap =
+            (c0 >= -eps_on && c1 >= -eps_on && c2 >= -eps_on) ||
+            (c0 <= eps_on && c1 <= eps_on && c2 <= eps_on);
+      } else {
+        double dx_cd = tx1 - tx0, dy_cd = ty1 - ty0;
+        double len_sq = dx_cd * dx_cd + dy_cd * dy_cd;
+        if (len_sq >= eps_par) {
+          double t_mid =
+              ((mid_x - tx0) * dx_cd + (mid_y - ty0) * dy_cd) / len_sq;
+          overlap = (t_mid >= -eps_on && t_mid <= 1.0 + eps_on);
+        }
       }
     }
 
@@ -461,8 +518,23 @@ split_contour_segment_by_faces(const CachedUVMesh &cache, double ax_mm,
     }
   }
 
-  if (pts.empty())
+  if (pts.empty()) {
+    // No mesh vertices or edge-plane intersections on the segment. Segment may
+    // lie entirely inside one face (no edge crossings). Use overlap-based
+    // face lookup for the whole segment so we still get a result.
+    std::vector<size_t> faces =
+        find_faces_for_segment(cache, ax_mm, ay_mm, bx_mm, by_mm, z_mm);
+    if (!faces.empty()) {
+      SubSegmentWithFaces sub;
+      sub.ax_mm = ax_mm;
+      sub.ay_mm = ay_mm;
+      sub.bx_mm = bx_mm;
+      sub.by_mm = by_mm;
+      sub.faces = std::move(faces);
+      return {std::move(sub)};
+    }
     return {};
+  }
 
   // Deduplicate by (x,y) and sort by t.
   std::sort(pts.begin(), pts.end(),
@@ -677,8 +749,10 @@ point_to_uv(const CachedUVMesh &cache, double x_mm, double y_mm, double z_mm,
             const std::vector<size_t> *restrict_to_faces = nullptr) {
   const indexed_triangle_set &its = cache.mesh.its;
   if (its.vertices.empty() || its.indices.empty() ||
-      cache.uvs.size() != its.indices.size())
+      cache.uvs.size() != its.indices.size()){
+    std::cout << "point_to_uv: its.vertices.empty() || its.indices.empty() || cache.uvs.size() != its.indices.size()" << std::endl;
     return std::nullopt;
+  }
 
   // double pz = (cache.bbox_max.z() <= 0.f) ? -z_mm : z_mm;
   double pz = z_mm;
@@ -689,43 +763,85 @@ point_to_uv(const CachedUVMesh &cache, double x_mm, double y_mm, double z_mm,
   double best_sqr_dist = std::numeric_limits<double>::max();
 
   if (restrict_to_faces && !restrict_to_faces->empty()) {
+    const double plane_eps = 1e-6;
+    const double bary_eps = 1e-5;
     for (size_t fi : *restrict_to_faces) {
-      if (fi >= its.indices.size())
+      if (fi >= its.indices.size()){
+        std::cout << "point_to_uv: fi >= its.indices.size()" << std::endl;
         continue;
+      }
       const Vec3i &face = its.indices[fi];
       Vec3d a = its.vertices[face(0)].cast<double>();
       Vec3d b = its.vertices[face(1)].cast<double>();
       Vec3d c = its.vertices[face(2)].cast<double>();
-      Vec3d ab = b - a, ac = c - a, ap = P - a;
-      double d1 = ab.dot(ap), d2 = ac.dot(ap);
-
-      Vec3d closest;
-      if (d1 <= 0 && d2 <= 0) {
-        closest = a;
-      } else {
-        Vec3d bp = P - b;
-        double d3 = ab.dot(bp), d4 = ac.dot(bp);
-        if (d3 >= 0 && d4 <= d3) {
-          closest = b;
-        } else {
-          Vec3d cp = P - c;
-          double d5 = ab.dot(cp), d6 = ac.dot(cp);
-          if (d6 >= 0 && d5 <= d6) {
-            closest = c;
-          } else {
-            double vc = d1 * d4 - d3 * d2, vb = d5 * d2 - d1 * d6,
-                   va = d3 * d6 - d5 * d4;
-            double denom = 1.0 / (va + vb + vc);
-            double v = vb * denom, w = vc * denom;
-            closest = a + ab * v + ac * w;
-          }
-        }
+      Vec3d n = (b - a).cross(c - a);
+      double n_len = n.norm();
+      if (n_len < plane_eps){
+        std::cout << "point_to_uv: n_len < plane_eps" << std::endl;
+        continue;
       }
-      double sqr_dist = (P - closest).squaredNorm();
+      n /= n_len;
+      Vec3d ap = P - a;
+      double dist_plane = ap.dot(n);
+      Vec3d proj = P - dist_plane * n;
+      auto bary = barycentric_coords_3d(proj, a, b, c);
+      if (!bary){
+        std::cout << "point_to_uv: bary is null" << std::endl;
+        continue;
+      }
+      float w0 = (*bary)[0], w1 = (*bary)[1], w2 = (*bary)[2];
+      if (w0 < -bary_eps || w0 > 1.f + bary_eps || w1 < -bary_eps ||
+          w1 > 1.f + bary_eps || w2 < -bary_eps || w2 > 1.f + bary_eps){
+        std::cout << "point_to_uv: w0 < -bary_eps || w0 > 1.f + bary_eps || w1 < -bary_eps || w1 > 1.f + bary_eps || w2 < -bary_eps || w2 > 1.f + bary_eps" << std::endl;
+        continue;
+      }
+      double sqr_dist = dist_plane * dist_plane;
       if (sqr_dist < best_sqr_dist) {
         best_sqr_dist = sqr_dist;
         hit_idx = fi;
-        hit_point = closest;
+        hit_point = proj;
+      }
+    }
+    if (best_sqr_dist == std::numeric_limits<double>::max()) {
+      for (size_t fi : *restrict_to_faces) {
+        if (fi >= its.indices.size()){
+          std::cout << "point_to_uv: fi >= its.indices.size()" << std::endl;
+          continue;
+        }
+        const Vec3i &face = its.indices[fi];
+        Vec3d a = its.vertices[face(0)].cast<double>();
+        Vec3d b = its.vertices[face(1)].cast<double>();
+        Vec3d c = its.vertices[face(2)].cast<double>();
+        Vec3d ab = b - a, ac = c - a, ap = P - a;
+        double d1 = ab.dot(ap), d2 = ac.dot(ap);
+        Vec3d closest;
+        if (d1 <= 0 && d2 <= 0) {
+          closest = a;
+        } else {
+          Vec3d bp = P - b;
+          double d3 = ab.dot(bp), d4 = ac.dot(bp);
+          if (d3 >= 0 && d4 <= d3) {
+            closest = b;
+          } else {
+            Vec3d cp = P - c;
+            double d5 = ab.dot(cp), d6 = ac.dot(cp);
+            if (d6 >= 0 && d5 <= d6) {
+              closest = c;
+            } else {
+              double vc = d1 * d4 - d3 * d2, vb = d5 * d2 - d1 * d6,
+                     va = d3 * d6 - d5 * d4;
+              double denom = 1.0 / (va + vb + vc);
+              double v = vb * denom, w = vc * denom;
+              closest = a + ab * v + ac * w;
+            }
+          }
+        }
+        double sqr_dist = (P - closest).squaredNorm();
+        if (sqr_dist < best_sqr_dist) {
+          best_sqr_dist = sqr_dist;
+          hit_idx = fi;
+          hit_point = closest;
+        }
       }
     }
   } else {
@@ -733,25 +849,38 @@ point_to_uv(const CachedUVMesh &cache, double x_mm, double y_mm, double z_mm,
         its.vertices, its.indices, cache.tree, P, hit_idx, hit_point);
   }
 
-  const double epsilon_sq = 1e-6;
+  // When restrict_to_faces is used, do not overwrite with global search (would
+  // pick a face from another island). Use a more permissive tolerance so
+  // points on/near the plane (e.g. from find_faces_for_segment) get a UV despite
+  // floating-point error or contour inset putting the point slightly off the triangle.
+  const double epsilon_sq = (restrict_to_faces && !restrict_to_faces->empty())
+                                ? 0.05  // ~0.22 mm: allow closest-point when projection is outside triangle
+                                : 1e-6; // 0.001 mm
 
-  if (best_sqr_dist < 0 || best_sqr_dist > epsilon_sq) {
+  if (!(restrict_to_faces && !restrict_to_faces->empty()) &&
+      (best_sqr_dist < 0 || best_sqr_dist > epsilon_sq)) {
     best_sqr_dist = AABBTreeIndirect::squared_distance_to_indexed_triangle_set(
         its.vertices, its.indices, cache.tree, P, hit_idx, hit_point);
   }
 
-  if (best_sqr_dist < 0 || best_sqr_dist > epsilon_sq)
+  if (best_sqr_dist < 0 || best_sqr_dist > epsilon_sq){
+    std::cout << "point_to_uv: best_sqr_dist < 0 || best_sqr_dist > epsilon_sq" << std::endl;
     return std::nullopt;
-  if (hit_idx >= cache.uvs.size())
+  }
+  if (hit_idx >= cache.uvs.size()){
+    std::cout << "point_to_uv: hit_idx >= cache.uvs.size()" << std::endl;
     return std::nullopt;
+  }
 
   const Vec3i &face = its.indices[hit_idx];
   Vec3d A = its.vertices[face(0)].cast<double>();
   Vec3d B = its.vertices[face(1)].cast<double>();
   Vec3d C = its.vertices[face(2)].cast<double>();
   auto bary = barycentric_coords_3d(hit_point, A, B, C);
-  if (!bary)
+  if (!bary){
+    std::cout << "point_to_uv: bary is null" << std::endl;
     return std::nullopt;
+  }
 
   float w0 = (*bary)[0], w1 = (*bary)[1], w2 = (*bary)[2];
   const std::array<Vec2f, 3> &uv_arr = cache.uvs[hit_idx];
@@ -1204,6 +1333,12 @@ static std::vector<UVSegmentInCell>
 subdivide_uv_segment_by_grid(const Vec2f &a, const Vec2f &b, int grid_cols,
                              int grid_rows) {
   std::vector<UVSegmentInCell> out;
+  constexpr float deg_eps = 1e-9f;
+  if (std::abs(b.x() - a.x()) < deg_eps && std::abs(b.y() - a.y()) < deg_eps) {
+    std::cout << "Segment is too short" << std::endl;
+    return out;
+  }
+
   float du = b.x() - a.x(), dv = b.y() - a.y();
   auto [ci, cj] = uv_to_grid_cell(a.x(), a.y(), grid_cols, grid_rows, du, dv);
   auto [bi, bj] = uv_to_grid_cell(b.x(), b.y(), grid_cols, grid_rows, -du, -dv);
@@ -1245,6 +1380,11 @@ subdivide_uv_segment_by_grid(const Vec2f &a, const Vec2f &b, int grid_cols,
 
   du = b_clamped.x() - a_clamped.x();
   dv = b_clamped.y() - a_clamped.y();
+  if (std::abs(du) < deg_eps && std::abs(dv) < deg_eps) {
+    std::cout << "Segment is too short" << std::endl;
+    return out;
+  }
+
   Vec2f current_uv = a_clamped;
   constexpr float t_done_eps = 1e-6f;
 
@@ -1269,14 +1409,18 @@ subdivide_uv_segment_by_grid(const Vec2f &a, const Vec2f &b, int grid_cols,
     Vec2f end_uv(end_u, end_v);
     out.push_back({current_uv, end_uv, ci, cj});
 
-    if (t >= 1.f - t_done_eps)
+    if (t >= 1.f - t_done_eps) {
+      std::cout << "Segment is done" << std::endl;
       break;
+    }
 
     current_uv = end_uv;
     auto next = adjacent_cell_bounded(ci, cj, exit_edge, walk_min_ci,
                                       walk_max_ci, walk_min_cj, walk_max_cj);
-    if (next.first == ci && next.second == cj)
+    if (next.first == ci && next.second == cj) {
+      std::cout << "Segment is done" << std::endl;
       break;
+    }
     ci = next.first;
     cj = next.second;
   }
@@ -1312,6 +1456,9 @@ subdivide_uv_segment_by_grid_clamped(const Vec2f &a, const Vec2f &b,
   const int walk_max_ci = std::min(max_ci, std::max(ci_a, ci_b));
   const int walk_min_cj = std::max(min_cj, std::min(cj_a, cj_b));
   const int walk_max_cj = std::min(max_cj, std::max(cj_a, cj_b));
+
+  if (walk_min_ci > walk_max_ci || walk_min_cj > walk_max_cj)
+    return {};
 
   std::vector<UVSegmentInCell> out;
   float u_lo = float(walk_min_ci) / float(grid_cols) + 1e-6f;
@@ -1352,6 +1499,14 @@ subdivide_uv_segment_by_grid_clamped(const Vec2f &a, const Vec2f &b,
   return out;
 }
 
+// Segment with contour-order metadata for sorting into a continuous tool path.
+struct ContourSegmentWithOrder {
+  Point start;
+  Point end;
+  size_t contour_edge{0};
+  size_t cell_index{0};
+};
+
 // Extract contour segments that lie in black grid cells by clipping each edge
 // to UV cells. Uses face-based algorithm: find faces for each segment, get UV
 // island, restrict projection and grid subdivision to that island.
@@ -1368,7 +1523,7 @@ extract_black_contour_segments(const Polygon &contour, double z_mm,
   if (cache.face_to_island.empty() || cache.island_faces.empty())
     return result;
 
-  std::vector<std::pair<Point, Point>> segments;
+  std::vector<ContourSegmentWithOrder> segments;
 
   for (size_t k = 0; k < n; ++k) {
     Point p_a = contour.points[k];
@@ -1395,10 +1550,12 @@ extract_black_contour_segments(const Polygon &contour, double z_mm,
       const std::vector<size_t> &island_face_list =
           cache.island_faces[island_id];
 
+      // Restrict to sub.faces so the segment endpoints are found on a face that
+      // overlaps this segment (island_face_list can miss the hit face).
       auto A_uv =
-          point_to_uv(cache, sub.ax_mm, sub.ay_mm, z_mm, &island_face_list);
+          point_to_uv(cache, sub.ax_mm, sub.ay_mm, z_mm, &sub.faces);
       auto B_uv =
-          point_to_uv(cache, sub.bx_mm, sub.by_mm, z_mm, &island_face_list);
+          point_to_uv(cache, sub.bx_mm, sub.by_mm, z_mm, &sub.faces);
 
       if (!A_uv || !B_uv)
         continue;
@@ -1406,7 +1563,8 @@ extract_black_contour_segments(const Polygon &contour, double z_mm,
       std::vector<UVSegmentInCell> cell_segments =
           subdivide_uv_segment_by_grid(*A_uv, *B_uv, grid_cols, grid_rows);
 
-      for (const UVSegmentInCell &seg : cell_segments) {
+      for (size_t cell_idx = 0; cell_idx < cell_segments.size(); ++cell_idx) {
+        const UVSegmentInCell &seg = cell_segments[cell_idx];
         if (!is_black_cell(seg.ci, seg.cj))
           continue;
 
@@ -1422,16 +1580,36 @@ extract_black_contour_segments(const Polygon &contour, double z_mm,
             cache, start_opt->x(), start_opt->y(), outward_offset_mm);
         Point end_pt = point_mm_to_model_surface(
             cache, end_opt->x(), end_opt->y(), outward_offset_mm);
-        segments.push_back({start_pt, end_pt});
+        segments.push_back(
+            {start_pt, end_pt, k, cell_idx});
       }
     }
   }
 
-  // Merge consecutive segments that share an endpoint into polylines.
-  const coord_t eps2 = scale_(0.001) * scale_(0.001);
+  // Sort by contour order so the merge builds a continuous path along the contour.
+  std::sort(segments.begin(), segments.end(),
+            [](const ContourSegmentWithOrder &a, const ContourSegmentWithOrder &b) {
+              return std::tie(a.contour_edge, a.cell_index) <
+                     std::tie(b.contour_edge, b.cell_index);
+            });
+
+  // Merge consecutive segments that share an endpoint or are continuous into
+  // single polylines. Use a tolerance so small numerical differences from
+  // UV/projection don't prevent merging. 0.15 mm accommodates back-projection
+  // noise (layer 36 and similar) where 0.05 mm still left some segments split.
+  const coord_t eps2 = scale_(0.15) * scale_(0.15);
   auto same_point = [eps2](const Point &a, const Point &b) {
     Vec2d d = (a - b).cast<double>();
     return d.squaredNorm() <= eps2;
+  };
+
+  auto append_point_if_new = [&same_point](Polyline &pl, const Point &p) {
+    if (pl.points.empty() || !same_point(pl.points.back(), p))
+      pl.points.push_back(p);
+  };
+  auto prepend_point_if_new = [&same_point](Polyline &pl, const Point &p) {
+    if (pl.points.empty() || !same_point(pl.points.front(), p))
+      pl.points.insert(pl.points.begin(), p);
   };
 
   std::vector<bool> used(segments.size(), false);
@@ -1439,8 +1617,8 @@ extract_black_contour_segments(const Polygon &contour, double z_mm,
     if (used[i])
       continue;
     Polyline pl;
-    pl.points.push_back(segments[i].first);
-    pl.points.push_back(segments[i].second);
+    pl.points.push_back(segments[i].start);
+    append_point_if_new(pl, segments[i].end);
     used[i] = true;
     bool changed;
     do {
@@ -1448,29 +1626,36 @@ extract_black_contour_segments(const Polygon &contour, double z_mm,
       for (size_t j = 0; j < segments.size(); ++j) {
         if (used[j])
           continue;
-        const Point &s0 = segments[j].first, &s1 = segments[j].second;
+        const Point &s0 = segments[j].start, &s1 = segments[j].end;
         if (same_point(pl.points.back(), s0)) {
-          pl.points.push_back(s1);
+          append_point_if_new(pl, s1);
           used[j] = true;
           changed = true;
         } else if (same_point(pl.points.back(), s1)) {
-          pl.points.push_back(s0);
+          append_point_if_new(pl, s0);
           used[j] = true;
           changed = true;
         } else if (same_point(pl.points.front(), s0)) {
-          pl.points.insert(pl.points.begin(), s1);
+          prepend_point_if_new(pl, s1);
           used[j] = true;
           changed = true;
         } else if (same_point(pl.points.front(), s1)) {
-          pl.points.insert(pl.points.begin(), s0);
+          prepend_point_if_new(pl, s0);
           used[j] = true;
           changed = true;
         }
       }
     } while (changed);
-    if (pl.points.size() >= 2)
-      result.push_back(std::move(pl));
+    // Collapse consecutive duplicate points (e.g. from degenerate segments).
+    Polyline dedup;
+    for (const Point &pt : pl.points) {
+      if (dedup.points.empty() || !same_point(dedup.points.back(), pt))
+        dedup.points.push_back(pt);
+    }
+    if (dedup.points.size() >= 2)
+      result.push_back(std::move(dedup));
   }
+
   result = chain_polylines(std::move(result));
   return result;
 }
@@ -1490,7 +1675,7 @@ static void sort_polylines_by_angle_from_ref(Polylines &polylines,
     if (pl.points.size() < 2)
       continue;
     double a_front = angle_from_ref(pl.points.front());
-    double a_back  = angle_from_ref(pl.points.back());
+    double a_back = angle_from_ref(pl.points.back());
     if (a_back < a_front)
       pl.reverse();
   }
@@ -1501,9 +1686,9 @@ static void sort_polylines_by_angle_from_ref(Polylines &polylines,
               if (b.points.empty())
                 return false;
               double a_key = std::min(angle_from_ref(a.points.front()),
-                                     angle_from_ref(a.points.back()));
+                                      angle_from_ref(a.points.back()));
               double b_key = std::min(angle_from_ref(b.points.front()),
-                                     angle_from_ref(b.points.back()));
+                                      angle_from_ref(b.points.back()));
               return a_key < b_key;
             });
 }
@@ -1522,10 +1707,10 @@ static bool ray_intersect_inner_contour(const Point &centroid,
   return inner_contour.first_intersection(ray, intersection_out);
 }
 
-// Find which polygon edge (0..n-1) the point lies on. Returns -1 if not on contour.
-// Only accepts an edge when the point's projection onto the segment lies in [0,1],
-// so a point past the segment (e.g. on the next edge near the vertex) is not
-// assigned to this edge.
+// Find which polygon edge (0..n-1) the point lies on. Returns -1 if not on
+// contour. Only accepts an edge when the point's projection onto the segment
+// lies in [0,1], so a point past the segment (e.g. on the next edge near the
+// vertex) is not assigned to this edge.
 static int find_edge_for_point(const Polygon &contour, const Point &pt) {
   const size_t n = contour.points.size();
   if (n < 2)
@@ -1556,7 +1741,8 @@ static int find_edge_for_point(const Polygon &contour, const Point &pt) {
   return best;
 }
 
-// Path from a to b along the contour (shorter arc). All points lie on the contour.
+// Path from a to b along the contour (shorter arc). All points lie on the
+// contour.
 static Polyline path_along_contour(const Polygon &contour, const Point &a,
                                    const Point &b) {
   const size_t n = contour.points.size();
@@ -1579,7 +1765,8 @@ static Polyline path_along_contour(const Polygon &contour, const Point &a,
     return Polyline{a, b};
   }
 
-  // Compute arc lengths: forward from vertex (ei+1)%n through edge ej, backward from ei through (ej+1)%n.
+  // Compute arc lengths: forward from vertex (ei+1)%n through edge ej, backward
+  // from ei through (ej+1)%n.
   auto arc_length_forward = [&]() -> double {
     double len = 0;
     for (size_t i = (ei + 1) % n;; i = (i + 1) % n) {
@@ -1644,9 +1831,9 @@ compute_outer_inner_segment_pairs(const Polylines &outer_polylines,
 
       Point proj_a, proj_b;
       if (!ray_intersect_inner_contour(centroid, pl.points[i], inner_contour,
-                                      &proj_a) ||
-          !ray_intersect_inner_contour(centroid, pl.points[i + 1], inner_contour,
-                                      &proj_b)) {
+                                       &proj_a) ||
+          !ray_intersect_inner_contour(centroid, pl.points[i + 1],
+                                       inner_contour, &proj_b)) {
         pairs.push_back({std::move(outer_seg), Polyline{}});
         continue;
       }
@@ -1662,8 +1849,9 @@ compute_outer_inner_segment_pairs(const Polylines &outer_polylines,
   return pairs;
 }
 
-// Build one continuous polyline: O1 → connect → I2 → connect → O2 → … → I_N → connect → O_N.
-// Inner segment 1 is never drawn. Connections are straight-line travel (one point).
+// Build one continuous polyline: O1 → connect → I2 → connect → O2 → … → I_N →
+// connect → O_N. Inner segment 1 is never drawn. Connections are straight-line
+// travel (one point).
 static Polylines build_alternating_outer_inner_polyline(
     const std::vector<std::pair<Polyline, Polyline>> &pairs) {
   Polylines result;
@@ -1719,8 +1907,9 @@ static Polylines build_alternating_outer_inner_polyline(
   return result;
 }
 
-// Build one continuous polyline: I1 → connect → O2 → connect → I2 → connect → O3 → … → I_N.
-// Used when layer_id % 2 == 1 to alternate connection direction vs outer-first pattern.
+// Build one continuous polyline: I1 → connect → O2 → connect → I2 → connect →
+// O3 → … → I_N. Used when layer_id % 2 == 1 to alternate connection direction
+// vs outer-first pattern.
 static Polylines build_alternating_inner_outer_polyline(
     const std::vector<std::pair<Polyline, Polyline>> &pairs) {
   Polylines result;
@@ -1738,6 +1927,7 @@ static Polylines build_alternating_inner_outer_polyline(
     if (out.points.empty() || !same_point(out.points.back(), p))
       out.points.push_back(p);
   };
+
   const size_t N = pairs.size();
 
   // Start with Inner segment 1 (pairs[0].second).
@@ -1765,6 +1955,10 @@ static Polylines build_alternating_inner_outer_polyline(
     }
   }
 
+  // Close the loop if first and last point differ (so path returns to start).
+  if (out.points.size() >= 2 && !same_point(out.points.front(), out.points.back()))
+    append_point(out.points.front());
+
   if (out.points.size() >= 2)
     result.push_back(std::move(out));
   return result;
@@ -1789,8 +1983,8 @@ static Polylines project_segments_radially(const Polylines &outer_polylines,
       if (!ray_intersect_inner_contour(centroid, pl.points[i], inner_contour,
                                        &proj_a))
         continue;
-      if (!ray_intersect_inner_contour(centroid, pl.points[i + 1], inner_contour,
-                                       &proj_b))
+      if (!ray_intersect_inner_contour(centroid, pl.points[i + 1],
+                                       inner_contour, &proj_b))
         continue;
       proj_a = inner_contour.point_projection(proj_a);
       proj_b = inner_contour.point_projection(proj_b);
@@ -1926,8 +2120,6 @@ void FillCheckered::_fill_surface_single(
   Polygon outer_contour = expolygon.contour;
   double z_mm = this->z;
 
-  
-
   std::shared_ptr<CachedUVMesh> cache = get_or_load_uv_mesh(m_uv_map_file_path);
 
   if (cache && cache->valid) {
@@ -1936,26 +2128,60 @@ void FillCheckered::_fill_surface_single(
     const double ox = m_contour_to_mesh_origin_mm.x();
     const double oy = m_contour_to_mesh_origin_mm.y();
 
-    polylines_out = extract_black_contour_segments(
-        outer_contour, z_mm, *cache, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS, ox,
-        oy, outward_offset_mm);
-    sort_polylines_by_angle_from_ref(polylines_out, outer_contour.centroid());
+    
 
-    if (!expolygon.holes.empty()) {
-      const Polygon &inner_contour = expolygon.holes[0];
-      Point centroid = outer_contour.centroid();
-      const double min_segment_length_mm =
-          std::max(0.2, 0.5 * unscale_(this->spacing));
-      std::vector<std::pair<Polyline, Polyline>> pairs =
-          compute_outer_inner_segment_pairs(
-              polylines_out, inner_contour, centroid, min_segment_length_mm);
+      polylines_out = extract_black_contour_segments(
+          outer_contour, z_mm, *cache, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS,
+          ox, oy, outward_offset_mm);
 
-       if (this->layer_id != size_t(-1) && (this->layer_id % 2) == 1)
-        polylines_out = build_alternating_inner_outer_polyline(pairs);
-      else
-        polylines_out = build_alternating_outer_inner_polyline(pairs);
+
+      sort_polylines_by_angle_from_ref(polylines_out, outer_contour.centroid());
+
+      if (!expolygon.holes.empty()) {
+        const Polygon &inner_contour = expolygon.holes[0];
+        Point centroid = outer_contour.centroid();
+        // const double min_segment_length_mm =
+        //     std::max(0.2, 0.5 * unscale_(this->spacing));
+        const double min_segment_length_mm = 0.001;
+        
+        std::vector<std::pair<Polyline, Polyline>> pairs =
+            compute_outer_inner_segment_pairs(
+                polylines_out, inner_contour, centroid,
+                min_segment_length_mm);
+
+#ifdef CHECKERED_INFILL_DEBUG_PAIRS_SVG
+        {
+          static const char *pair_colors[] = {
+              "red", "blue", "green", "orange", "purple", "brown",
+              "magenta", "cyan", "navy", "darkgreen", "crimson", "teal"};
+          constexpr size_t num_colors = sizeof(pair_colors) / sizeof(pair_colors[0]);
+          std::string path = debug_out_path(
+              "fill_checkered_pairs_layer%d_z%.2f.svg",
+              int(this->layer_id), this->z);
+          BoundingBox bbox = get_extents(expolygon);
+          bbox.offset(scale_(2.));
+          SVG svg(path, bbox);
+          if (svg.is_opened()) {
+            svg.draw_outline(expolygon, "gray", "lightgray", scale_(0.05));
+            for (size_t i = 0; i < pairs.size(); ++i) {
+              const char *stroke = pair_colors[i % num_colors];
+              coordf_t w = scale_(0.1);
+              if (!pairs[i].first.points.empty())
+                svg.draw(pairs[i].first, stroke, w);
+              if (!pairs[i].second.points.empty())
+                svg.draw(pairs[i].second, stroke, w);
+            }
+            svg.add_comment("Checkered infill outer/inner segment pairs (one color per pair)");
+          }
+        }
+#endif
+
+         if (this->layer_id != size_t(-1) && (this->layer_id % 2) == 1)
+          polylines_out = build_alternating_inner_outer_polyline(pairs);
+        else
+          polylines_out = build_alternating_outer_inner_polyline(pairs);
+      }
     }
   }
-}
 
 } // namespace Slic3r
